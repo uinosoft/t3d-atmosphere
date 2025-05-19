@@ -1,0 +1,12 @@
+{
+    "name": "t3d-atmosphere-examples",
+    "version": "0.0.1",
+    "private": true,
+    "description": "Examples for t3d-atmosphere library",
+    "dependencies": {
+        "es-module-shims": "^2.5.1",
+        "t3d": "^0.4.0",
+        "t3d-atmosphere": "file:..",
+        "tweakpane": "^4.0.5"
+    }
+}

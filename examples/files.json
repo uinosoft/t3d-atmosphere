@@ -1,0 +1,8 @@
+{
+	"atmos": [
+		"atmos_sky"
+	],
+	"luts": [
+		"luts_generation"
+	]
+}

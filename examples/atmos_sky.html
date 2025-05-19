@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>t3d-atmosphere sky</title>
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link type="text/css" rel="stylesheet" href="main.css">
+</head>
+<body>
+    <div id="info">
+        <a href="" target="_blank">t3d-atmosphere</a> - sky
+    </div>
+
+	<!-- Import maps polyfill -->
+    <!-- Remove this when import maps will be widely supported -->
+    <script async src="./node_modules/es-module-shims/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "t3d": "./node_modules/t3d/build/t3d.module.js",
+                "t3d/addons/": "./node_modules/t3d/examples/jsm/",
+				"t3d-atmosphere": "./node_modules/t3d-atmosphere/build/t3d.atmosphere.module.js",
+				"tweakpane": "./node_modules/tweakpane/dist/tweakpane.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+		import * as t3d from 't3d';
+		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
+		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
+		import { AtmosLUTsGenerator, AtmosSky } from 't3d-atmosphere';
+		import { Pane } from 'tweakpane';
+
+		let width = window.innerWidth || 2;
+		let height = window.innerHeight || 2;
+
+		const container = document.createElement('div');
+		document.body.appendChild(container);
+
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		container.appendChild(canvas);
+
+		const forwardRenderer = new ForwardRenderer(canvas, { antialias: true, alpha: true });
+		forwardRenderer.setClearColor(0, 0, 0, 0);
+
+		const scene = new t3d.Scene();
+
+		const camera = new t3d.Camera();
+		camera.setPerspective(70 / 180 * Math.PI, width / height, 1, 1000);
+		camera.position.set(0, 1, 5);
+		scene.add(camera);
+
+		const controller = new OrbitControls(camera, canvas);
+
+		// scene
+
+		const ambientLight = new t3d.AmbientLight(0x77aaff, 0.3);
+		scene.add(ambientLight);
+
+		const sphere_geometry = new t3d.SphereGeometry(0.5, 20, 20);
+		const sphere_material = new t3d.PBRMaterial();
+		sphere_material.diffuse.setHex(0xffffff);
+		sphere_material.roughness = 0.7;
+		sphere_material.metalness = 0.3;
+		const sphere = new t3d.Mesh(sphere_geometry, sphere_material);
+		sphere.castShadow = true;
+		scene.add(sphere);
+
+		const plane_geometry = new t3d.PlaneGeometry(5, 5);
+		const plane_material = new t3d.PBRMaterial();
+		plane_material.roughness = 1;
+		plane_material.metalness = 0;
+		plane_material.diffuse.setHex(0xffffff);
+		const plane = new t3d.Mesh(plane_geometry, plane_material);
+		plane.position.y = -0.5;
+		plane.receiveShadow = true;
+		scene.add(plane);
+
+		// precompute
+
+		const precomputeOptions = {
+			transmittanceMapping: 2,
+			use3DInscatterTexture: true,
+			altitudeLayers: 4
+		};
+
+		let atmosLUTsGenerator;
+
+		function precompute() {
+			atmosLUTsGenerator && atmosLUTsGenerator.dispose();
+			atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
+			atmosLUTsGenerator.computeTransmittance(forwardRenderer);
+			atmosLUTsGenerator.computeInscatter(forwardRenderer);
+
+			return atmosLUTsGenerator;
+		}
+
+		// sky and sun
+
+		const sky = new AtmosSky();
+		scene.add(sky);
+
+		const skyMaterial = sky.material;
+		skyMaterial.defines.BACKGROUND = true;
+		skyMaterial.uniforms.cameraHeight = 400;
+
+		const directionalLight = new t3d.DirectionalLight(0xffffff, 0.5);
+		directionalLight.position.set(-10, 20, 30);
+		directionalLight.castShadow = true;
+		directionalLight.shadow.windowSize = 3;
+		scene.add(directionalLight);
+
+		const sunAngles = { x: -23, y: 17 };
+		const spherical = new t3d.Spherical(50, 0, 0);
+		const vector3 = new t3d.Vector3();
+
+		function setSunAndMoonDir() {
+			spherical.phi = Math.PI / 2 - sunAngles.y * Math.PI / 180;
+			spherical.theta = Math.PI - sunAngles.x * Math.PI / 180;
+			vector3.setFromSpherical(spherical);
+
+			directionalLight.position.copy(vector3);
+			directionalLight.lookAt(new t3d.Vector3(), new t3d.Vector3(0, 1, 0));
+
+			vector3.normalize();
+
+			vector3.toArray(skyMaterial.uniforms['sunDirSize']);
+		}
+
+		sky.setLUTs(precompute());
+		setSunAndMoonDir();
+
+		// gui
+
+		let oldCameraHeight = 0;
+
+		const pane = new Pane();
+
+		const precomputeFolder = pane.addFolder({
+			title: 'Precompute',
+			expanded: false
+		}).on('change', () => {
+			sky.setLUTs(precompute());
+		});
+		precomputeFolder.addBinding(precomputeOptions, 'transmittanceMapping', {
+			label: 'Transmittance Mapping',
+			options: {
+				'Linear': 0,
+				'Mapping-2008': 1,
+				'Mapping-2017': 2
+			}
+		});
+		precomputeFolder.addBinding(precomputeOptions, 'use3DInscatterTexture', {
+			label: '3D Inscatter'
+		});
+		precomputeFolder.addBinding(precomputeOptions, 'altitudeLayers', {
+			label: 'Altitude Layers',
+			options: { '1': 1, '4': 4 }
+		});
+
+		const altitudeFolder = pane.addFolder({
+			title: 'Altitude'
+		});
+		altitudeFolder.addBinding(skyMaterial.defines, 'BACKGROUND', {
+			label: 'Fixed Altitude'
+		}).on('change', ({ value }) => {
+			if (!value) {
+				oldCameraHeight = skyMaterial.uniforms.cameraHeight;
+			} else {
+				skyMaterial.uniforms.cameraHeight = oldCameraHeight;
+			}
+			altitudeControl.disabled = !value;
+			skyMaterial.needsUpdate = true;
+		});
+		const altitudeControl = altitudeFolder.addBinding(skyMaterial.uniforms, 'cameraHeight', {
+			min: 0,
+			max: 70000,
+			label: 'Altitude'
+		});
+
+		const miePhaseFolder = pane.addFolder({
+			title: 'Mie Phase',
+			expanded: false
+		});
+		
+		miePhaseFolder.addBinding(skyMaterial.uniforms, 'miePhaseG', {
+			min: 0,
+			max: 1,
+			step: 0.01,
+			label: 'Mie Phase G'
+		});
+		
+		miePhaseFolder.addBinding(skyMaterial.uniforms, 'miePhaseScale', {
+			min: 0,
+			max: 20,
+			step: 0.01,
+			label: 'SkyMieScale'
+		});
+
+		const sunFolder = pane.addFolder({
+			title: 'Sun'
+		});
+		sunFolder.addBinding({ sunAngles }, 'sunAngles', {
+			x: { min: -180, max: 180 },
+			y: { min: -90, max: 90, inverted: true },
+			label: 'Sun Angles',
+			expanded: true,
+			picker: 'inline'
+		}).on('change', () => {
+			setSunAndMoonDir();
+		});
+		sunFolder.addBinding(skyMaterial.defines, 'SKY_SUNDISK', {
+			label: 'Sun Disk'
+		}).on('change', () => {
+			skyMaterial.needsUpdate = true;
+		});
+		sunFolder.addBinding(skyMaterial.uniforms.sunDirSize, '3', {
+			min: 0,
+			label: 'Sun Disk Size'
+		});
+
+		const toneMappingFolder = pane.addFolder({
+			title: 'Tone Mapping',
+			expanded: false
+		});
+		toneMappingFolder.addBinding(skyMaterial.defines, 'TONE_MAPPING', {
+			label: 'Tone Mapping',
+			options: {
+				'Linear': 0,
+				'Reinhard': 1,
+				'Optimized Cineon': 2,
+				'ACES Filmic': 3,
+				'Neutral': 4,
+				'AgX': 5,
+				'Unity (Legacy)': 6
+			}
+		}).on('change', () => {
+			skyMaterial.needsUpdate = true;
+		});
+		toneMappingFolder.addBinding(skyMaterial.uniforms, 'toneMappingExposure', {
+			min: 0,
+			step: 1,
+			label: 'Exposure'
+		});
+		toneMappingFolder.addBinding(skyMaterial.defines, 'SRGB_OUTPUT', {
+			label: 'sRGB Output'
+		}).on('change', () => {
+			skyMaterial.needsUpdate = true;
+		});
+
+		const otherFolder = pane.addFolder({
+			title: 'Other',
+			expanded: false
+		});
+		otherFolder.addBinding(skyMaterial, 'dithering', {
+			label: 'Dithering'
+		}).on('change', () => {
+			skyMaterial.needsUpdate = true;
+		});
+
+		//
+
+		function loop(count) {
+			requestAnimationFrame(loop);
+
+			controller.update();
+
+			if (!skyMaterial.defines.BACKGROUND) {
+				skyMaterial.uniforms.cameraHeight = camera.position.y;
+			}
+
+			forwardRenderer.render(scene, camera);
+		}
+		requestAnimationFrame(loop);
+
+		function onWindowResize() {
+			width = window.innerWidth || 2;
+			height = window.innerHeight || 2;
+
+			camera.setPerspective(70 / 180 * Math.PI, width / height, 1, 1000);
+
+			forwardRenderer.backRenderTarget.resize(width, height);
+		}
+		window.addEventListener('resize', onWindowResize, false);
+	</script>
+</body>
+</html>

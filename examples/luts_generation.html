@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>t3d-atmosphere luts generation</title>
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link type="text/css" rel="stylesheet" href="main.css">
+</head>
+<body>
+    <div id="info">
+        <a href="" target="_blank">t3d-atmosphere</a> - luts generation
+    </div>
+
+	<!-- Import maps polyfill -->
+    <!-- Remove this when import maps will be widely supported -->
+    <script async src="./node_modules/es-module-shims/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "t3d": "./node_modules/t3d/build/t3d.module.js",
+                "t3d/addons/": "./node_modules/t3d/examples/jsm/",
+				"t3d-atmosphere": "./node_modules/t3d-atmosphere/build/t3d.atmosphere.module.js",
+				"tweakpane": "./node_modules/tweakpane/dist/tweakpane.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+		import * as t3d from 't3d';
+		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
+		import { AtmosLUTsGenerator } from 't3d-atmosphere';
+		import { LUTHelper } from './jsm/LUTHelper.js';
+		import { Pane } from 'tweakpane';
+
+		let width = window.innerWidth || 2;
+		let height = window.innerHeight || 2;
+
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		document.body.appendChild(canvas);
+
+		const contextParams = { antialias: true, alpha: false };
+		const gl = canvas.getContext('webgl2', contextParams) || canvas.getContext('webgl', contextParams);
+		const renderer = new t3d.WebGLRenderer(gl);
+
+		const backRenderTarget = new t3d.RenderTargetBack(canvas);
+		
+		const scene = new t3d.Scene();
+
+		const camera = new t3d.Camera();
+		camera.position.set(0, 1.5, 6);
+		camera.setPerspective(30 / 180 * Math.PI, width / height, 0.01, 100);
+		scene.add(camera);
+
+		const controller = new OrbitControls(camera, canvas);
+
+		//
+
+		let atmosLUTsGenerator, transmittanceHelper, inscatterHelper;
+
+		function precompute() {
+			clear();
+
+			atmosLUTsGenerator = new AtmosLUTsGenerator(renderer.capabilities, precomputeOptions);
+			// atmosLUTsGenerator.setBetaRayleighDensity(new t3d.Vector3(680, 550, 440), new t3d.Color3(128 / 255, 128 / 255, 128 / 255, 255 / 255), 1.0);
+
+			console.time('computeTransmittance');
+			atmosLUTsGenerator.computeTransmittance(renderer);
+			console.timeEnd('computeTransmittance');
+
+			console.time('computeInscatter');
+			atmosLUTsGenerator.computeInscatter(renderer);
+			console.timeEnd('computeInscatter');
+
+			transmittanceHelper = new LUTHelper(atmosLUTsGenerator.transmittanceTexture);
+			transmittanceHelper.position.set(-1.1, 0, 0);
+			transmittanceHelper.scale.set(2, 1, 0.5);
+			scene.add(transmittanceHelper);
+
+			inscatterHelper = new LUTHelper(atmosLUTsGenerator.inscatterTexture);
+			inscatterHelper.position.set(1.1, 0, 0);
+			if (atmosLUTsGenerator.use3DInscatterTexture) {
+				inscatterHelper.scale.set(2, 0.5, 1);
+			} else {
+				inscatterHelper.scale.set(2, 0.5, atmosLUTsGenerator.altitudeLayers);
+			}
+			scene.add(inscatterHelper);
+		}
+
+		function clear() {
+			atmosLUTsGenerator && atmosLUTsGenerator.dispose();
+
+			if (transmittanceHelper) {
+				transmittanceHelper.geometry.dispose();
+				transmittanceHelper.material.dispose();
+				scene.remove(transmittanceHelper);
+			}
+
+			if (inscatterHelper) {
+				inscatterHelper.geometry.dispose();
+				inscatterHelper.material.dispose();
+				scene.remove(inscatterHelper);
+			}
+		}
+
+		const precomputeOptions = {
+			transmittanceMapping: 2,
+			inscatterMapping: 1,
+			use3DInscatterTexture: true,
+			altitudeLayers: 4
+		};
+		
+		precompute();
+
+		// gui
+
+		const pane = new Pane();
+
+		pane.on('change', () => precompute());
+
+		pane.addBinding(precomputeOptions, 'transmittanceMapping', {
+			label: 'Transmittance Mapping',
+			options: { 'Linear': 0, 'Mapping-2008': 1, 'Mapping-2017': 2 }
+		});
+
+		pane.addBinding(precomputeOptions, 'inscatterMapping', {
+			label: 'Inscatter Mapping',
+			options: { 'Linear': 0, 'Non-Linear': 1 }
+		});
+
+		pane.addBinding(precomputeOptions, 'use3DInscatterTexture', {
+			label: '3D Inscatter'
+		}).on('change', ({ value }) => {
+			altitudeLayersControl.disabled = value;
+		});
+
+		const altitudeLayersControl = pane.addBinding(precomputeOptions, 'altitudeLayers', {
+			label: 'Altitude Layers',
+			options: { 'Only one Layer': 1, 'Four Layers': 4 },
+			disabled: precomputeOptions.use3DInscatterTexture
+		});
+
+		//
+
+		function loop(count) {
+			requestAnimationFrame(loop);
+
+			controller.update();
+
+			scene.updateMatrix();
+			scene.updateRenderStates(camera);
+			scene.updateRenderQueue(camera);
+
+			renderer.setRenderTarget(backRenderTarget);
+			renderer.setClearColor(0.1, 0.1, 0.1, 1);
+			renderer.clear(true, true, true);
+			renderer.renderScene(scene, camera);
+		}
+		requestAnimationFrame(loop);
+
+		function onWindowResize() {
+			width = window.innerWidth || 2;
+			height = window.innerHeight || 2;
+
+			camera.setPerspective(30 / 180 * Math.PI, width / height, 0.01, 100);
+
+			backRenderTarget.resize(width, height);
+		}
+		window.addEventListener('resize', onWindowResize, false);
+	</script>
+</body>
+</html>

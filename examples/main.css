@@ -1,0 +1,84 @@
+@font-face {
+    font-family: 'body';
+    src: url('./files/fonts/Montserrat-Regular.ttf') format('truetype');
+    font-display: fallback;
+}
+
+body {
+    margin: 0px;
+    background-color: #f0f0f0;
+    color: #fff;
+    font-family: "body", "Arial", sans-serif;
+    font-size: 13px;
+	line-height: 24px;
+	overscroll-behavior: none;
+    overflow: hidden;
+}
+
+.dark {
+    color: #000;
+}
+
+a {
+    color: #FF7F02;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+#info {
+    position: absolute;
+    top: 0px;
+    width: 100%;
+    padding: 10px;
+    box-sizing: border-box;
+    text-align: center;
+    -moz-user-select: none;
+	-webkit-user-select: none;
+	-ms-user-select: none;
+	user-select: none;
+    pointer-events: none;
+    z-index: 1; /* TODO Solve this in HTML */
+}
+
+a {
+    pointer-events: auto;
+}
+
+canvas {
+    display: block;
+    -webkit-tap-highlight-color: rgba(0,0,0,0);
+    -moz-user-select: none;
+	-webkit-user-select: none;
+	-ms-user-select: none;
+	user-select: none;
+}
+
+.bar {
+    background: lightgreen;
+}
+
+#notSupported {
+	width: 50%;
+	margin: auto;
+	background-color: #f00;
+	margin-top: 20px;
+	padding: 10px;
+}
+
+body .tp-dfwv {
+    top: 0;
+    right: 8px;
+    width: 245px;
+}
+
+@media screen and (max-width: 640px) {
+    body .tp-dfwv {
+        top: auto;
+        right: auto;
+        bottom: 0;
+        left: 8px;
+    }
+}
