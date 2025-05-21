@@ -1,4 +1,4 @@
-export const AtmosphereCommon = `
+export const AtmosphereCommon = /* glsl */`
 uniform vec4 betaR;
 
 const float RES_R_TOTAL = 32.; // all altitude layer

@@ -1,7 +1,7 @@
 // t3d-atmosphere
 import { Mesh, ShaderMaterial, DRAW_SIDE, SphereGeometry, Vector3, PIXEL_TYPE, RenderTarget2D, TEXTURE_FILTER, PIXEL_FORMAT, RenderTarget3D, ShaderPostPass, MathUtils } from 't3d';
 
-const AtmosphereCommon = `
+const AtmosphereCommon = /* glsl */`
 uniform vec4 betaR;
 
 const float RES_R_TOTAL = 32.; // all altitude layer
@@ -59,7 +59,7 @@ float DistanceToNearestAtmosphereBoundary(float r, float mu, bool rayIntersectsG
 `;
 
 // ref https://ebruneton.github.io/precomputed_atmospheric_scattering
-const TransmittanceLookup = `
+const TransmittanceLookup = /* glsl */`
 #if TRANSMITTANCE_MAPPING == 0
 	vec2 GetTransmittanceUvFromRMu(float r, float mu) {
 		float u = (mu + 0.15) / (1.0 + 0.15);
@@ -122,7 +122,7 @@ vec3 GetTransmittance(float r, float mu, float d, bool rayIntersectsGround) {
 }
 `;
 
-const InscatterLookup = `
+const InscatterLookup = /* glsl */`
 #ifdef INSCATTER_3D
 	const float RES_R = RES_R_TOTAL;
 #else
@@ -213,7 +213,7 @@ vec4 GetScattering(float r, float mu, float muS, float nu, bool rayIntersectsGro
 // 4 - Neutral
 // 5 - AgX
 // 6 - Unity (Legacy)
-const ToneMapping = `
+const ToneMapping = /* glsl */`
 #if TONE_MAPPING == 0
 	// exposure only
 	vec3 ToneMapping(vec3 color) {
@@ -406,7 +406,7 @@ const AtmosSkyShader = {
 
 		sunDirSize: [0, 1, 0, 1]
 	},
-	vertexShader: `
+	vertexShader: /* glsl */`
         #define PI 3.14159265359
 
         attribute vec3 a_Position;
@@ -469,7 +469,7 @@ const AtmosSkyShader = {
             #endif
         }
     `,
-	fragmentShader: `
+	fragmentShader: /* glsl */`
         uniform vec4 sunDirSize;
 
 		#ifdef INSCATTER_3D
@@ -627,7 +627,7 @@ class AtmosSky extends Mesh {
 
 }
 
-const PrecomputeCommon = `
+const PrecomputeCommon = /* glsl */`
 // The radius of the planet (Rg), radius of the atmosphere (Rt),  atmosphere limit (RL)
 const float Rg = 6360.0;
 const float Rt = 6420.0;
@@ -654,7 +654,7 @@ const vec3 betaOzone = vec3(0.000650, 0.001881, 0.000085);
 
 // ref https://ebruneton.github.io/precomputed_atmospheric_scattering
 // ref https://www.shadertoy.com/view/DsBGWG
-const TransmittanceCompute = `
+const TransmittanceCompute = /* glsl */`
 // total optical length of rayleigh or mie
 float OpticalDepth(float H, float r, float mu) {
 	float dx = DistanceToTopAtmosphereBoundary(r, mu) / float(TRANSMITTANCE_INTEGRAL_SAMPLES);
@@ -739,7 +739,7 @@ const TransmittanceShader = {
 	uniforms: {
 		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1]
 	},
-	vertexShader: `
+	vertexShader: /* glsl */`
         attribute vec3 a_Position;
         attribute vec2 a_Uv;
            
@@ -753,7 +753,7 @@ const TransmittanceShader = {
             gl_Position = u_ProjectionView * u_Model * vec4(a_Position, 1.0);
         }
     `,
-	fragmentShader: `
+	fragmentShader: /* glsl */`
         varying vec2 v_Uv;
 
 		${PrecomputeCommon}
@@ -766,7 +766,7 @@ const TransmittanceShader = {
     `
 };
 
-const InscatterCompute = `
+const InscatterCompute = /* glsl */`
 void GetRMuMuSNuFromScatteringUvwz(vec4 uvwz, out float r, out float mu, out float muS, out float nu, out bool rayIntersectsGround) {
 	float xMuS = GetUnitRangeFromTextureCoord(uvwz.y, RES_MU_S);
 
@@ -863,7 +863,7 @@ const InscatterShader = {
 		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 		layer: 0
 	},
-	vertexShader: `
+	vertexShader: /* glsl */`
         attribute vec3 a_Position;
         attribute vec2 a_Uv;
            
@@ -877,7 +877,7 @@ const InscatterShader = {
             gl_Position = u_ProjectionView * u_Model * vec4(a_Position, 1.0);
         }
     `,
-	fragmentShader: `
+	fragmentShader: /* glsl */`
 		${PrecomputeCommon}
         ${AtmosphereCommon}
 

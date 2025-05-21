@@ -1,4 +1,4 @@
-export const InscatterLookup = `
+export const InscatterLookup = /* glsl */`
 #ifdef INSCATTER_3D
 	const float RES_R = RES_R_TOTAL;
 #else

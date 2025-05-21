@@ -5,7 +5,7 @@
 // 4 - Neutral
 // 5 - AgX
 // 6 - Unity (Legacy)
-export const ToneMapping = `
+export const ToneMapping = /* glsl */`
 #if TONE_MAPPING == 0
 	// exposure only
 	vec3 ToneMapping(vec3 color) {

@@ -1,5 +1,5 @@
 // ref https://ebruneton.github.io/precomputed_atmospheric_scattering
-export const TransmittanceLookup = `
+export const TransmittanceLookup = /* glsl */`
 #if TRANSMITTANCE_MAPPING == 0
 	vec2 GetTransmittanceUvFromRMu(float r, float mu) {
 		float u = (mu + 0.15) / (1.0 + 0.15);

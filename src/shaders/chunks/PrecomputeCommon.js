@@ -1,4 +1,4 @@
-export const PrecomputeCommon = `
+export const PrecomputeCommon = /* glsl */`
 // The radius of the planet (Rg), radius of the atmosphere (Rt),  atmosphere limit (RL)
 const float Rg = 6360.0;
 const float Rt = 6420.0;

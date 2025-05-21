@@ -7,7 +7,7 @@ export const TransmittanceShader = {
 	uniforms: {
 		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1]
 	},
-	vertexShader: `
+	vertexShader: /* glsl */`
         attribute vec3 a_Position;
         attribute vec2 a_Uv;
            
@@ -21,7 +21,7 @@ export const TransmittanceShader = {
             gl_Position = u_ProjectionView * u_Model * vec4(a_Position, 1.0);
         }
     `,
-	fragmentShader: `
+	fragmentShader: /* glsl */`
         varying vec2 v_Uv;
 
 		${PrecomputeCommon}

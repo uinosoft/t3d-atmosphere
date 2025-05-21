@@ -31,7 +31,7 @@ export const AtmosSkyShader = {
 
 		sunDirSize: [0, 1, 0, 1]
 	},
-	vertexShader: `
+	vertexShader: /* glsl */`
         #define PI 3.14159265359
 
         attribute vec3 a_Position;
@@ -94,7 +94,7 @@ export const AtmosSkyShader = {
             #endif
         }
     `,
-	fragmentShader: `
+	fragmentShader: /* glsl */`
         uniform vec4 sunDirSize;
 
 		#ifdef INSCATTER_3D

@@ -1,6 +1,6 @@
 // ref https://ebruneton.github.io/precomputed_atmospheric_scattering
 // ref https://www.shadertoy.com/view/DsBGWG
-export const TransmittanceCompute = `
+export const TransmittanceCompute = /* glsl */`
 // total optical length of rayleigh or mie
 float OpticalDepth(float H, float r, float mu) {
 	float dx = DistanceToTopAtmosphereBoundary(r, mu) / float(TRANSMITTANCE_INTEGRAL_SAMPLES);

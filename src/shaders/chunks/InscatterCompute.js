@@ -1,4 +1,4 @@
-export const InscatterCompute = `
+export const InscatterCompute = /* glsl */`
 void GetRMuMuSNuFromScatteringUvwz(vec4 uvwz, out float r, out float mu, out float muS, out float nu, out bool rayIntersectsGround) {
 	float xMuS = GetUnitRangeFromTextureCoord(uvwz.y, RES_MU_S);
 
