@@ -80,4 +80,26 @@ vec4 GetScattering(float r, float mu, float muS, float nu, bool rayIntersectsGro
 		#endif
 	#endif 
 }
+
+vec3 GetMie(vec4 rayMie) {	
+	// approximated single Mie scattering (cf. approximate Cm in paragraph "Angular precision")
+	// rayMie.rgb = C*, rayMie.w = Cm, r
+	return rayMie.rgb * rayMie.w / max(rayMie.r, 1e-4) * (betaR.r / betaR.xyz);
+}
+
+float RayleighPhaseFunction(float nu) {
+	float k = 3.0 / (16.0 * PI);
+	return k * (1.0 + nu * nu);
+}
+
+float MiePhaseFunction(float g, float nu) {
+	float k = 3.0 / (8.0 * PI) * (1.0 - g * g) / (2.0 + g * g);
+	return k * (1.0 + nu * nu) / pow(1.0 + g * g - 2.0 * g * nu, 1.5);
+}
+
+vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayIntersectsGround, out vec3 single_mie_scattering) {
+	vec4 scattering = GetScattering(r, mu, muS, nu, rayIntersectsGround);
+	single_mie_scattering = GetMie(scattering);
+	return scattering.rgb;
+}
 `;

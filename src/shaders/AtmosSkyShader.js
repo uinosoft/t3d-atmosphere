@@ -24,8 +24,7 @@ export const AtmosSkyShader = {
 
 		cameraHeight: 0, // camera height to sealevel
 
-		miePhaseG: 0.8,
-		miePhaseScale: 1,
+		u_mie_phase_function_g: 0.8,
 
 		toneMappingExposure: 10.0,
 
@@ -42,25 +41,9 @@ export const AtmosSkyShader = {
 
         uniform float cameraHeight;
 
-        uniform float miePhaseG;
-        uniform float miePhaseScale;
-
         uniform vec4 sunDirSize;
 
         varying vec4 vWorldPosAndCamY;
-
-        varying vec3 vMiePhase_g;
-        varying vec3 vSun_g;
-
-        // Mie phase G function and Mie scattering scale, (compute this function in Vertex program for optimization)
-        vec3 PhaseFunctionG(float g, float scale) {
-            float g2 = g * g;
-            return vec3(
-				scale * 3.0 / (8.0 * PI) * (1.0 - g2) / (2.0 + g2), 
-				1.0 + g2, 
-				2.0 * g
-			);
-        }
 
 		mat4 clearMat4Translate(mat4 m) {
 			mat4 outMatrix = m;
@@ -84,14 +67,6 @@ export const AtmosSkyShader = {
 
 			gl_Position = u_Projection * viewMatrix * modelMatrix * vec4(a_Position, 1.0);
 			gl_Position.z = gl_Position.w;
-
-            vMiePhase_g = PhaseFunctionG(miePhaseG, miePhaseScale);
-
-            #ifdef SKY_SUNDISK
-                vSun_g = PhaseFunctionG(.99, sunDirSize.w * 0.004);
-            #else
-                vSun_g = vec3(0., 0., 0.);
-            #endif
         }
     `,
 	fragmentShader: /* glsl */`
@@ -105,11 +80,11 @@ export const AtmosSkyShader = {
        
         uniform sampler2D transmittanceTexture;
 
+		uniform float u_mie_phase_function_g;
+
         uniform float toneMappingExposure;
 
         varying vec4 vWorldPosAndCamY;
-        varying vec3 vMiePhase_g;
-        varying vec3 vSun_g;
 
         const float Rg = 6360000.0;
         const float Rt = 6420000.0;
@@ -119,59 +94,41 @@ export const AtmosSkyShader = {
 		${TransmittanceLookup}
 		${InscatterLookup}
 
-        vec3 GetMie(vec4 rayMie) {	
-            // approximated single Mie scattering (cf. approximate Cm in paragraph "Angular precision")
-            // rayMie.rgb = C*, rayMie.w = Cm, r
-            return rayMie.rgb * rayMie.w / max(rayMie.r, 1e-4) * (betaR.r / betaR.xyz);
-        }
-
-        float PhaseFunctionR() {
-			// Rayleigh phase function without multiply (1.0 + mu * mu)
-			// We will multiply (1.0 + mu * mu) together with Mie phase later.
-			return 3.0 / (16.0 * PI);
-		}
-
-        float PhaseFunctionM(float mu, vec3 miePhase_g) {
-			// Mie phase function (optimized)
-			// Precomputed PhaseFunctionG() with constant values in vertex program and pass them in here
-			// we will multiply (1.0 + mu * mu) together with Rayleigh phase later.
-			return miePhase_g.x / pow(miePhase_g.y - miePhase_g.z * mu, 1.5);
-		}
-
 		bool RayIntersectsGround(float r, float mu) {
 			return mu < 0.0 && r * r * (mu * mu - 1.0) + Rg * Rg >= 0.0;
 		}
 
-        vec3 SkyRadiance(vec3 camera, vec3 viewdir, float nu, vec3 MiePhase_g, out vec3 transmittance) {
+        vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, out vec3 transmittance) {
             float r = length(camera);
-            float rMu = dot(camera, viewdir);
+            float rmu = dot(camera, view_ray);
 
-            float din = -rMu - sqrt(rMu * rMu - r * r + Rt * Rt);
+            float distance_to_top_atmosphere_boundary =
+				-rmu - SafeSqrt(rmu * rmu - r * r + Rt * Rt);
             
-            if (din > 0.0) {
-                camera += din * viewdir;
-                rMu += din;
-                r = Rt;
+            if (distance_to_top_atmosphere_boundary > 0.0) {
+                camera = camera + view_ray * distance_to_top_atmosphere_boundary;
+				r = Rt;
+                rmu += distance_to_top_atmosphere_boundary;
             } else if (r > Rt) {
-			 	transmittance = vec3(1., 1., 1.);
-				return vec3(0., 0., 0.);
+			 	transmittance = vec3(1.0);
+				return vec3(0.0);
 			}
 
-			float mu = rMu / r;
-			float muS = dot(camera, sunDirSize.xyz) / r;
-            // float nu = dot(viewdir, sunDirSize.xyz); // nu value is from function input
+			float mu = rmu / r;
+			float mu_s = dot(camera, sun_direction) / r;
+            float nu = dot(view_ray, sun_direction);
 
-			bool rayIntersectsGround = RayIntersectsGround(r, mu);
+			bool ray_r_mu_intersects_ground = RayIntersectsGround(r, mu);
 
-            transmittance = rayIntersectsGround ? vec3(0.0) : GetTransmittanceToTopAtmosphereBoundary(r, mu);
+            transmittance = ray_r_mu_intersects_ground
+				? vec3(0.0)
+				: GetTransmittanceToTopAtmosphereBoundary(r, mu);
 
-			vec4 scattering = GetScattering(r, rMu / r, muS, nu, rayIntersectsGround);
-			vec3 scatteringM = GetMie(scattering);
+			vec3 single_mie_scattering;
+			vec3 scattering = GetCombinedScattering(r, mu, mu_s, nu, ray_r_mu_intersects_ground, single_mie_scattering);
 
-			float phaseR = PhaseFunctionR();
-			float phaseM = PhaseFunctionM(nu, MiePhase_g);
-
-            return (scattering.rgb * phaseR + scatteringM * phaseM) * (1.0 + nu * nu);
+            return scattering * RayleighPhaseFunction(nu) +
+				single_mie_scattering * MiePhaseFunction(u_mie_phase_function_g, nu);
         }
 
 		${ToneMapping}
@@ -183,12 +140,12 @@ export const AtmosSkyShader = {
             float nu = dot(dir, sunDirSize.xyz);
 
             vec3 transmittance = vec3(0.0);
-            vec3 col = SkyRadiance(vec3(0.0, vWorldPosAndCamY.w + Rg, 0.0), dir, nu, vMiePhase_g, transmittance);
+            vec3 col = GetSkyRadiance(vec3(0.0, vWorldPosAndCamY.w + Rg, 0.0), dir, sunDirSize.xyz, transmittance);
 
 			col = ToneMapping(col);
 			
             #ifdef SKY_SUNDISK
-                float sun = PhaseFunctionM(nu, vSun_g) * (1.0 + nu * nu); 
+				float sun = 0.004 * sunDirSize.w * MiePhaseFunction(0.99, nu);
 		        col += sun * transmittance;
             #endif
 
