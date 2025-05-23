@@ -194,26 +194,44 @@
 			label: 'Function G'
 		});
 
+		const groundFolder = pane.addFolder({
+			title: 'Ground',
+			expanded: false
+		});
+		groundFolder.addBinding(skyMaterial.defines, 'GROUND_ALBEDO', {
+			label: 'enable'
+		}).on('change', () => {
+			skyMaterial.needsUpdate = true;
+		});
+		const groundAlbedoColor = new t3d.Color3().fromArray(skyMaterial.uniforms.u_ground_albedo).convertLinearToSRGB();
+		const groundAlbedoColorSRGB = new t3d.Color3();
+		groundFolder.addBinding({ groundAlbedoColor }, 'groundAlbedoColor', {
+			color: { type: 'float' },
+			label: 'albedo'
+		}).on('change', () => {
+			groundAlbedoColorSRGB.copy(groundAlbedoColor).convertSRGBToLinear().toArray(skyMaterial.uniforms.u_ground_albedo);
+		});
+
 		const sunFolder = pane.addFolder({
 			title: 'Sun'
 		});
 		sunFolder.addBinding({ sunAngles }, 'sunAngles', {
 			x: { min: -180, max: 180 },
 			y: { min: -90, max: 90, inverted: true },
-			label: 'Sun Angles',
+			label: 'Angles',
 			expanded: true,
 			picker: 'inline'
 		}).on('change', () => {
 			setSunAndMoonDir();
 		});
 		sunFolder.addBinding(skyMaterial.defines, 'SKY_SUNDISK', {
-			label: 'Sun Disk'
+			label: 'Disk'
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
 		});
 		sunFolder.addBinding(skyMaterial.uniforms.sunDirSize, '3', {
 			min: 0,
-			label: 'Sun Disk Size'
+			label: 'Disk Size'
 		});
 
 		const toneMappingFolder = pane.addFolder({
