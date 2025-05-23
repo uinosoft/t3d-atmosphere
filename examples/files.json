@@ -3,6 +3,7 @@
 		"atmos_sky"
 	],
 	"luts": [
-		"luts_generation"
+		"luts_generation",
+		"luts_loader"
 	]
 }

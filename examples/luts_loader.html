@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>t3d-atmosphere luts loader</title>
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link type="text/css" rel="stylesheet" href="main.css">
+</head>
+<body>
+    <div id="info">
+        <a href="" target="_blank">t3d-atmosphere</a> - luts loader
+    </div>
+
+	<!-- Import maps polyfill -->
+    <!-- Remove this when import maps will be widely supported -->
+    <script async src="./node_modules/es-module-shims/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "t3d": "./node_modules/t3d/build/t3d.module.js",
+                "t3d/addons/": "./node_modules/t3d/examples/jsm/",
+				"t3d-atmosphere": "../build/t3d.atmosphere.module.js",
+				"tweakpane": "./node_modules/tweakpane/dist/tweakpane.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+		import * as t3d from 't3d';
+		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
+		import { AtmosLUTsLoader } from 't3d-atmosphere';
+		import { LUTHelper } from './jsm/LUTHelper.js';
+
+		let width = window.innerWidth || 2;
+		let height = window.innerHeight || 2;
+
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		document.body.appendChild(canvas);
+
+		const contextParams = { antialias: true, alpha: false };
+		const gl = canvas.getContext('webgl2', contextParams) || canvas.getContext('webgl', contextParams);
+		const renderer = new t3d.WebGLRenderer(gl);
+
+		const backRenderTarget = new t3d.RenderTargetBack(canvas);
+		
+		const scene = new t3d.Scene();
+
+		const camera = new t3d.Camera();
+		camera.position.set(0, 1.5, 6);
+		camera.setPerspective(30 / 180 * Math.PI, width / height, 0.01, 100);
+		scene.add(camera);
+
+		const controller = new OrbitControls(camera, canvas);
+
+		//
+
+		async function load() {
+			const atmosLUTsLoader = new AtmosLUTsLoader(renderer.capabilities);
+
+			console.time('load transmittance');
+			await atmosLUTsLoader.loadTransmittanceTexture('./assets/transmittance.bin');
+			console.timeEnd('load transmittance');
+
+			console.time('load inscatter');
+			await atmosLUTsLoader.loadInscatterTexture('./assets/scattering.bin');
+			console.timeEnd('load inscatter');
+
+			const lutsData = atmosLUTsLoader.data;
+
+			const transmittanceHelper = new LUTHelper(lutsData.transmittanceTexture);
+			transmittanceHelper.position.set(-1.1, 0, 0);
+			transmittanceHelper.scale.set(2, 1, 0.5);
+			scene.add(transmittanceHelper);
+
+			const inscatterHelper = new LUTHelper(lutsData.inscatterTexture);
+			inscatterHelper.position.set(1.1, 0, 0);
+			if (lutsData.use3DInscatterTexture) {
+				inscatterHelper.scale.set(2, 0.5, 1);
+			} else {
+				inscatterHelper.scale.set(2, 0.5, lutsData.altitudeLayers);
+			}
+			scene.add(inscatterHelper);
+		}
+
+		load();
+
+		//
+
+		function loop(count) {
+			requestAnimationFrame(loop);
+
+			controller.update();
+
+			scene.updateMatrix();
+			scene.updateRenderStates(camera);
+			scene.updateRenderQueue(camera);
+
+			renderer.setRenderTarget(backRenderTarget);
+			renderer.setClearColor(0.1, 0.1, 0.1, 1);
+			renderer.clear(true, true, true);
+			renderer.renderScene(scene, camera);
+		}
+		requestAnimationFrame(loop);
+
+		function onWindowResize() {
+			width = window.innerWidth || 2;
+			height = window.innerHeight || 2;
+
+			camera.setPerspective(30 / 180 * Math.PI, width / height, 0.01, 100);
+
+			backRenderTarget.resize(width, height);
+		}
+		window.addEventListener('resize', onWindowResize, false);
+	</script>
+</body>
+</html>

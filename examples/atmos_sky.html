@@ -30,7 +30,7 @@
 		import * as t3d from 't3d';
 		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
-		import { AtmosLUTsGenerator, AtmosSky } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky } from 't3d-atmosphere';
 		import { Pane } from 'tweakpane';
 
 		let width = window.innerWidth || 2;
@@ -61,42 +61,69 @@
 		const ambientLight = new t3d.AmbientLight(0x77aaff, 0.3);
 		scene.add(ambientLight);
 
-		const sphere_geometry = new t3d.SphereGeometry(0.5, 20, 20);
-		const sphere_material = new t3d.PBRMaterial();
-		sphere_material.diffuse.setHex(0xffffff);
-		sphere_material.roughness = 0.7;
-		sphere_material.metalness = 0.3;
-		const sphere = new t3d.Mesh(sphere_geometry, sphere_material);
+		const sphereGeometry = new t3d.SphereGeometry(0.5, 20, 20);
+		const sphereMaterial = new t3d.PBRMaterial();
+		sphereMaterial.diffuse.setHex(0xffffff);
+		sphereMaterial.roughness = 0.7;
+		sphereMaterial.metalness = 0.3;
+		const sphere = new t3d.Mesh(sphereGeometry, sphereMaterial);
 		sphere.castShadow = true;
 		scene.add(sphere);
 
-		const plane_geometry = new t3d.PlaneGeometry(5, 5);
-		const plane_material = new t3d.PBRMaterial();
-		plane_material.roughness = 1;
-		plane_material.metalness = 0;
-		plane_material.diffuse.setHex(0xffffff);
-		const plane = new t3d.Mesh(plane_geometry, plane_material);
+		const planeGeometry = new t3d.PlaneGeometry(5, 5);
+		const planeMaterial = new t3d.PBRMaterial();
+		planeMaterial.roughness = 1;
+		planeMaterial.metalness = 0;
+		planeMaterial.diffuse.setHex(0xffffff);
+		const plane = new t3d.Mesh(planeGeometry, planeMaterial);
 		plane.position.y = -0.5;
 		plane.receiveShadow = true;
 		scene.add(plane);
 
-		// precompute
+		// luts
 
 		const precomputeOptions = {
+			source: 'generator',
 			transmittanceMapping: 2,
 			use3DInscatterTexture: true,
 			altitudeLayers: 4
 		};
 
-		let atmosLUTsGenerator;
+		let atmosLUTsGenerator, atmosLUTsLoader;
 
-		function precompute() {
-			atmosLUTsGenerator && atmosLUTsGenerator.dispose();
-			atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
-			atmosLUTsGenerator.computeTransmittance(forwardRenderer);
-			atmosLUTsGenerator.computeInscatter(forwardRenderer);
+		async function getLUTsData() {
+			if (atmosLUTsGenerator) {
+				atmosLUTsGenerator.dispose();
+			}
 
-			return atmosLUTsGenerator.data;
+			if (precomputeOptions.source === 'generator') {
+				atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
+				// atmosLUTsGenerator.setBetaRayleighDensity(new t3d.Vector3(680, 550, 440), new t3d.Color3(128 / 255, 128 / 255, 128 / 255, 255 / 255), 1.0);
+
+				console.time('computeTransmittance');
+				atmosLUTsGenerator.computeTransmittance(forwardRenderer);
+				console.timeEnd('computeTransmittance');
+
+				console.time('computeInscatter');
+				atmosLUTsGenerator.computeInscatter(forwardRenderer);
+				console.timeEnd('computeInscatter');
+
+				return atmosLUTsGenerator.data;
+			} else {
+				if (!atmosLUTsLoader) {
+					atmosLUTsLoader = new AtmosLUTsLoader(forwardRenderer.capabilities);
+
+					console.time('loadTransmittance');
+					await atmosLUTsLoader.loadTransmittanceTexture('./assets/transmittance.bin');
+					console.timeEnd('loadTransmittance');
+
+					console.time('loadInscatter');
+					await atmosLUTsLoader.loadInscatterTexture('./assets/scattering.bin');
+					console.timeEnd('loadInscatter');
+				}
+
+				return atmosLUTsLoader.data;
+			}
 		}
 
 		// sky and sun
@@ -131,8 +158,10 @@
 			vector3.toArray(skyMaterial.uniforms['sunDirSize']);
 		}
 
-		sky.setLUTs(precompute());
-		setSunAndMoonDir();
+		getLUTsData().then(lutsData => {
+			sky.setLUTs(lutsData);
+			setSunAndMoonDir();
+		});
 
 		// gui
 
@@ -140,11 +169,26 @@
 
 		const pane = new Pane();
 
-		const precomputeFolder = pane.addFolder({
-			title: 'Precompute',
+		const lutsFolder = pane.addFolder({
+			title: 'LUTs',
 			expanded: false
-		}).on('change', () => {
-			sky.setLUTs(precompute());
+		});
+		lutsFolder.addBinding(precomputeOptions, 'source', {
+			label: 'Source',
+			options: {
+				'Generator': 'generator',
+				'Loader': 'loader'
+			}
+		}).on('change', async ({ value }) => {
+			pane.disabled = true;
+			sky.setLUTs(await getLUTsData());
+			pane.disabled = false;
+			precomputeFolder.disabled = value === 'loader';
+		});
+		const precomputeFolder = lutsFolder.addFolder({
+			title: 'Generator Options'
+		}).on('change', async () => {
+			sky.setLUTs(await getLUTsData());
 		});
 		precomputeFolder.addBinding(precomputeOptions, 'transmittanceMapping', {
 			label: 'Transmittance Mapping',

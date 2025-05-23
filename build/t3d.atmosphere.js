@@ -1167,7 +1167,105 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 	const _vec3_1 = new t3d.Vector3();
 	const _vec3_2 = new t3d.Vector3();
 
+	class AtmosLUTsLoader {
+		constructor(capabilities, options = {}) {
+			this._fileLoader = new t3d.FileLoader(options.manager);
+			this._fileLoader.setResponseType('arraybuffer');
+			this._data = {
+				transmittanceTexture: null,
+				inscatterTexture: null,
+				betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
+				transmittanceMapping: 2,
+				inscatterMapping: 1,
+				use3DInscatterTexture: true,
+				altitudeLayers: 4
+			};
+			let type = t3d.PIXEL_TYPE.FLOAT;
+			const isWebGL2 = capabilities.version > 1;
+			if (isWebGL2) {
+				if (capabilities.getExtension('EXT_color_buffer_float') && capabilities.getExtension('OES_texture_float_linear')) {
+					type = t3d.PIXEL_TYPE.FLOAT;
+				} else {
+					type = t3d.PIXEL_TYPE.HALF_FLOAT;
+				}
+			} else {
+				if (capabilities.getExtension('OES_texture_float') && capabilities.getExtension('OES_texture_float_linear')) {
+					type = t3d.PIXEL_TYPE.FLOAT;
+				} else if (capabilities.getExtension('OES_texture_half_float') && capabilities.getExtension('OES_texture_half_float_linear')) {
+					type = t3d.PIXEL_TYPE.HALF_FLOAT;
+				} else {
+					type = t3d.PIXEL_TYPE.UNSIGNED_BYTE;
+					console.warn('Half float texture is not supported!');
+				}
+			}
+			const transmittanceTexture = new t3d.Texture2D();
+			transmittanceTexture.minFilter = t3d.TEXTURE_FILTER.LINEAR;
+			transmittanceTexture.magFilter = t3d.TEXTURE_FILTER.LINEAR;
+			transmittanceTexture.type = type;
+			transmittanceTexture.generateMipmaps = false;
+			transmittanceTexture.flipY = false;
+			this._data.transmittanceTexture = transmittanceTexture;
+			const inscatterTexture = new t3d.Texture3D();
+			inscatterTexture.minFilter = t3d.TEXTURE_FILTER.LINEAR;
+			inscatterTexture.magFilter = t3d.TEXTURE_FILTER.LINEAR;
+			inscatterTexture.type = type;
+			inscatterTexture.format = t3d.PIXEL_FORMAT.RGBA;
+			inscatterTexture.generateMipmaps = false;
+			this._data.inscatterTexture = inscatterTexture;
+		}
+		get data() {
+			return this._data;
+		}
+		loadTransmittanceTexture(url) {
+			return this._fileLoader.loadAsync(url).then(data => {
+				const texture = this._data.transmittanceTexture;
+				texture.image = {
+					data: getImageDataFromArrayBuffer(data, texture.type),
+					width: 256,
+					height: 64
+				};
+				texture.version++;
+			});
+		}
+		loadInscatterTexture(url) {
+			return this._fileLoader.loadAsync(url).then(data => {
+				const texture = this._data.inscatterTexture;
+				texture.image = {
+					data: getImageDataFromArrayBuffer(data, texture.type),
+					width: 256,
+					height: 128,
+					depth: 32
+				};
+				texture.version++;
+			});
+		}
+		dispose() {
+			this._data.transmittanceTexture.dispose();
+			this._data.inscatterTexture.dispose();
+		}
+	}
+	function getImageDataFromArrayBuffer(arrayBuffer, type) {
+		const halfFloatArray = new Uint16Array(arrayBuffer);
+		const length = halfFloatArray.length;
+		if (type === t3d.PIXEL_TYPE.FLOAT) {
+			const floatArray = new Float32Array(length);
+			for (let i = 0; i < length; i++) {
+				floatArray[i] = t3d.MathUtils.fromHalfFloat(halfFloatArray[i]);
+			}
+			return floatArray;
+		} else if (type === t3d.PIXEL_TYPE.HALF_FLOAT) {
+			return halfFloatArray;
+		} else {
+			const uint8Array = new Uint8Array(length);
+			for (let i = 0; i < length; i++) {
+				uint8Array[i] = Math.round(t3d.MathUtils.fromHalfFloat(halfFloatArray[i]) * 255);
+			}
+			return uint8Array;
+		}
+	}
+
 	exports.AtmosLUTsGenerator = AtmosLUTsGenerator;
+	exports.AtmosLUTsLoader = AtmosLUTsLoader;
 	exports.AtmosSky = AtmosSky;
 
 }));
