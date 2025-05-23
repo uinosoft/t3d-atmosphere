@@ -91,38 +91,19 @@ export class AtmosLUTsGenerator {
 
 		this._betaR = betaR;
 
-		this._transmittanceMapping = transmittanceMapping;
-		this._inscatterMapping = inscatterMapping;
-		this._use3DInscatterTexture = use3DInscatterTexture;
-		this._altitudeLayers = altitudeLayers;
+		this._data = {
+			transmittanceTexture: transmittanceRT.texture,
+			inscatterTexture: inscatterRT.texture,
+			betaR: betaR,
+			transmittanceMapping: transmittanceMapping,
+			inscatterMapping: inscatterMapping,
+			use3DInscatterTexture: use3DInscatterTexture,
+			altitudeLayers: altitudeLayers
+		};
 	}
 
-	get transmittanceTexture() {
-		return this._transmittanceRT.texture;
-	}
-
-	get inscatterTexture() {
-		return this._inscatterRT.texture;
-	}
-
-	get betaR() {
-		return this._betaR;
-	}
-
-	get transmittanceMapping() {
-		return this._transmittanceMapping;
-	}
-
-	get inscatterMapping() {
-		return this._inscatterMapping;
-	}
-
-	get use3DInscatterTexture() {
-		return this._use3DInscatterTexture;
-	}
-
-	get altitudeLayers() {
-		return this._altitudeLayers;
+	get data() {
+		return this._data;
 	}
 
 	computeTransmittance(renderer) {

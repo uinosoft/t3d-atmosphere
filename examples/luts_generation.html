@@ -74,17 +74,19 @@
 			atmosLUTsGenerator.computeInscatter(renderer);
 			console.timeEnd('computeInscatter');
 
-			transmittanceHelper = new LUTHelper(atmosLUTsGenerator.transmittanceTexture);
+			const lutsData = atmosLUTsGenerator.data;
+
+			transmittanceHelper = new LUTHelper(lutsData.transmittanceTexture);
 			transmittanceHelper.position.set(-1.1, 0, 0);
 			transmittanceHelper.scale.set(2, 1, 0.5);
 			scene.add(transmittanceHelper);
 
-			inscatterHelper = new LUTHelper(atmosLUTsGenerator.inscatterTexture);
+			inscatterHelper = new LUTHelper(lutsData.inscatterTexture);
 			inscatterHelper.position.set(1.1, 0, 0);
-			if (atmosLUTsGenerator.use3DInscatterTexture) {
+			if (lutsData.use3DInscatterTexture) {
 				inscatterHelper.scale.set(2, 0.5, 1);
 			} else {
-				inscatterHelper.scale.set(2, 0.5, atmosLUTsGenerator.altitudeLayers);
+				inscatterHelper.scale.set(2, 0.5, lutsData.altitudeLayers);
 			}
 			scene.add(inscatterHelper);
 		}
