@@ -15,11 +15,12 @@ export class AtmosSky extends Mesh {
 	}
 
 	setLUTs(lutsData) {
-		const { transmittanceTexture, inscatterTexture } = lutsData;
+		const { transmittanceTexture, inscatterTexture, irradianceTexture } = lutsData;
 		const { uniforms, defines } = this.material;
 
 		uniforms.transmittanceTexture = transmittanceTexture;
 		uniforms.inscatteringTexture = inscatterTexture;
+		uniforms.irradianceTexture = irradianceTexture;
 
 		uniforms.betaR = lutsData.betaR;
 

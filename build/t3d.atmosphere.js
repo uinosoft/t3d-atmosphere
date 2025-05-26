@@ -15,6 +15,11 @@ const float RES_NU = 8.;	// table per texture depth
 
 const vec2 TRANSMISSION_SIZE = vec2(256., 64.); // 256x64
 
+const float IRRADIANCE_TEXTURE_WIDTH = 64.;
+const float IRRADIANCE_TEXTURE_HEIGHT = 16.;
+
+const vec3 solar_irradiance = vec3(1.474, 1.8504, 1.91198);
+
 // ---------------------------------------------------------------------------- 
 // UTILITY FUNCTIONS
 // ---------------------------------------------------------------------------- 
@@ -116,12 +121,12 @@ vec3 GetTransmittance(float r, float mu, float d, bool rayIntersectsGround) {
 		return min(
 			GetTransmittanceToTopAtmosphereBoundary(r_d, -mu_d) /
 				GetTransmittanceToTopAtmosphereBoundary(r, -mu)
-			, 1.0);
+			, vec3(1.0));
 	} else {
 		return min(
 			GetTransmittanceToTopAtmosphereBoundary(r, mu) /
 				GetTransmittanceToTopAtmosphereBoundary(r_d, mu_d)
-			, 1.0);
+			, vec3(1.0));
 	}
 }
 `;
@@ -229,6 +234,22 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 	vec4 scattering = GetScattering(r, mu, muS, nu, rayIntersectsGround);
 	single_mie_scattering = GetMie(scattering);
 	return scattering.rgb;
+}
+`;
+
+	const IrradianceLookup = /* glsl */`
+vec2 GetIrradianceUvFromRMuS(float r, float mu_s) {
+	float x_r = (r - Rg) / (Rt - Rg);
+	float x_mu_s = mu_s * 0.5 + 0.5;
+	return vec2(
+		GetTextureCoordFromUnitRange(x_mu_s, IRRADIANCE_TEXTURE_WIDTH),
+		GetTextureCoordFromUnitRange(x_r, IRRADIANCE_TEXTURE_HEIGHT)
+	);
+}
+
+vec3 GetIrradiance(float r, float mu_s) {
+	vec2 uv = GetIrradianceUvFromRMuS(r, mu_s);
+	return vec3(texture2D(irradianceTexture, uv));
 }
 `;
 
@@ -414,18 +435,19 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 			BACKGROUND: false,
 			TONE_MAPPING: 5,
 			SRGB_OUTPUT: true,
-			GROUND_ALBEDO: false,
+			GROUND_ALBEDO: true,
 			SKY_SUNDISK: true
 		},
 		uniforms: {
 			inscatteringTexture: null,
 			transmittanceTexture: null,
+			irradianceTexture: null,
 			betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 			cameraHeight: 0,
 			// camera height to sealevel
 
 			u_mie_phase_function_g: 0.8,
-			u_ground_albedo: [0.01, 0.01, 0.01],
+			u_ground_albedo: [0.15, 0.15, 0.15],
 			toneMappingExposure: 10.0,
 			sunDirSize: [0, 1, 0, 1]
 		},
@@ -479,6 +501,8 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 			 
 				uniform sampler2D transmittanceTexture;
 
+		uniform sampler2D irradianceTexture;
+
 		uniform float u_mie_phase_function_g;
 		uniform vec3 u_ground_albedo;
 
@@ -493,6 +517,7 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 		${AtmosphereCommon}
 		${TransmittanceLookup}
 		${InscatterLookup}
+		${IrradianceLookup}
 
 		bool RayIntersectsGround(float r, float mu) {
 			return mu < 0.0 && r * r * (mu * mu - 1.0) + Rg * Rg >= 0.0;
@@ -607,6 +632,19 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 				single_mie_scattering * MiePhaseFunction(u_mie_phase_function_g, nu);
 		}
 
+		vec3 GetSunAndSkyIrradiance(vec3 point, vec3 normal, vec3 sun_direction, out vec3 sky_irradiance) {
+			float r = length(point);
+			float mu_s = dot(point, sun_direction) / r;
+
+			// Indirect irradiance (approximated if the surface is not horizontal).
+			sky_irradiance = GetIrradiance(r, mu_s) * (1.0 + dot(normal, point) / r) * 0.5;
+
+			// Direct irradiance.
+			return solar_irradiance *
+				GetTransmittanceToSun(r, mu_s) *
+				max(dot(normal, sun_direction), 0.0);
+		}
+
 		${ToneMapping}
 
 		#include <dithering_pars_frag>
@@ -625,8 +663,24 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 					float distance_to_ground = RaySphereFirstIntersection(camera, view_ray, Rg);
 					vec3 ground_point = view_ray * distance_to_ground + camera;
 					vec3 surface_normal = normalize(ground_point);
-					col = GetSkyRadianceToPoint(camera, surface_normal * (Rg + 1.0), sunDirSize.xyz, transmittance);
-					col += transmittance * u_ground_albedo;
+
+					vec3 skyIrradiance;
+					vec3 sunIrradiance = GetSunAndSkyIrradiance(
+						camera,
+						surface_normal, 
+						sunDirSize.xyz, 
+						skyIrradiance
+					);
+
+					vec3 inscatter = GetSkyRadianceToPoint(
+						camera,
+						surface_normal * (Rg + 1.0),
+						sunDirSize.xyz,
+						transmittance
+					);
+
+					vec3 radiance = u_ground_albedo * RECIPROCAL_PI * (sunIrradiance + skyIrradiance);
+					col = transmittance * radiance + inscatter;
 
 					transmittance = vec3(0.0);
 				} else {
@@ -666,7 +720,8 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 		setLUTs(lutsData) {
 			const {
 				transmittanceTexture,
-				inscatterTexture
+				inscatterTexture,
+				irradianceTexture
 			} = lutsData;
 			const {
 				uniforms,
@@ -674,6 +729,7 @@ vec3 GetCombinedScattering(float r, float mu, float muS, float nu, bool rayInter
 			} = this.material;
 			uniforms.transmittanceTexture = transmittanceTexture;
 			uniforms.inscatteringTexture = inscatterTexture;
+			uniforms.irradianceTexture = irradianceTexture;
 			uniforms.betaR = lutsData.betaR;
 			let needsUpdate = false;
 			if (defines.TRANSMITTANCE_MAPPING !== lutsData.transmittanceMapping) {
@@ -1005,6 +1061,109 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 		`
 	};
 
+	const IrradianceCompute = /* glsl */`
+void GetRMuSFromIrradianceUv(vec2 uv, out float r, out float mu_s) {
+	float x_mu_s = GetUnitRangeFromTextureCoord(uv.x, IRRADIANCE_TEXTURE_WIDTH);
+	float x_r = GetUnitRangeFromTextureCoord(uv.y, IRRADIANCE_TEXTURE_HEIGHT);
+	r = Rg + x_r * (Rt - Rg);
+	mu_s = ClampCosine(2.0 * x_mu_s - 1.0);
+}
+
+const float sun_angular_radius = 0.004675; // radians
+const float rad = 0.017453292519943295; // degrees to radians
+
+vec3 ComputeDirectIrradiance(float r, float mu_s) {
+	float alpha_s = sun_angular_radius / rad;
+	// Approximate average of the cosine factor mu_s over the visible fraction of
+	// the Sun disc.
+	float average_cosine_factor =
+		mu_s < -alpha_s ? 0.0 : (mu_s > alpha_s ? mu_s :
+		(mu_s + alpha_s) * (mu_s + alpha_s) / (4.0 * alpha_s));
+
+	return solar_irradiance *
+		GetTransmittanceToTopAtmosphereBoundary(r, mu_s) * average_cosine_factor;
+}
+
+vec3 ComputeIndirectIrradiance(float r, float mu_s) {
+	const int SAMPLE_COUNT = 32;
+	const float dphi = PI / float(SAMPLE_COUNT);
+	const float dtheta = PI / float(SAMPLE_COUNT);
+
+	vec3 result = vec3(0.0);
+	vec3 omega_s = vec3(sqrt(1.0 - mu_s * mu_s), 0.0, mu_s);
+	for (int j = 0; j < SAMPLE_COUNT / 2; ++j) {
+		float theta = (float(j) + 0.5) * dtheta;
+		for (int i = 0; i < 2 * SAMPLE_COUNT; ++i) {
+			float phi = (float(i) + 0.5) * dphi;
+			vec3 omega =
+				vec3(cos(phi) * sin(theta), sin(phi) * sin(theta), cos(theta));
+			float domega = (dtheta / rad) * (dphi / rad) * sin(theta);
+
+			float nu = dot(omega, omega_s);
+
+			vec3 single_mie_scattering;
+
+			vec3 scattering = GetCombinedScattering(r, omega.z, mu_s, nu, false, single_mie_scattering);
+
+			result += (scattering * RayleighPhaseFunction(nu) + single_mie_scattering *
+				MiePhaseFunction(miePhaseFunctionG, nu)) *
+				omega.z * domega;
+		}
+	}
+	return result;
+}
+`;
+
+	const IrradianceShader = {
+		name: 'atmos_irradiance',
+		uniforms: {
+			transmittanceTexture: null,
+			inscatteringTexture: null,
+			betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
+			miePhaseFunctionG: 0.8
+		},
+		vertexShader: /* glsl */`
+				attribute vec3 a_Position;
+				attribute vec2 a_Uv;
+					 
+				uniform mat4 u_ProjectionView;
+				uniform mat4 u_Model;
+
+				varying vec2 v_Uv;
+
+				void main() {
+						v_Uv = a_Uv;
+						gl_Position = u_ProjectionView * u_Model * vec4(a_Position, 1.0);
+				}
+		`,
+		fragmentShader: /* glsl */`
+				varying vec2 v_Uv;
+
+		${PrecomputeCommon}
+				${AtmosphereCommon}
+
+		uniform sampler2D transmittanceTexture;
+		
+		#ifdef INSCATTER_3D
+			uniform highp sampler3D inscatteringTexture;
+		#else
+			uniform sampler2D inscatteringTexture;
+		#endif
+
+		uniform float miePhaseFunctionG;
+
+		${TransmittanceLookup}
+		${InscatterLookup}
+		${IrradianceCompute}
+
+				void main() {
+						float r, mu_s;
+			GetRMuSFromIrradianceUv(v_Uv, r, mu_s);
+			gl_FragColor = vec4(ComputeIndirectIrradiance(r, mu_s) * 0.0006, 1.0);
+				}
+		`
+	};
+
 	class AtmosLUTsGenerator {
 		constructor(capabilities, options = {}) {
 			const isWebGL2 = capabilities.version > 1;
@@ -1063,6 +1222,12 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 			inscatterRT.texture.type = type;
 			inscatterRT.texture.format = t3d.PIXEL_FORMAT.RGBA;
 			inscatterRT.texture.generateMipmaps = false;
+			const irradianceRT = new t3d.RenderTarget2D(64, 16);
+			irradianceRT.texture.minFilter = t3d.TEXTURE_FILTER.LINEAR;
+			irradianceRT.texture.magFilter = t3d.TEXTURE_FILTER.LINEAR;
+			irradianceRT.texture.type = type;
+			irradianceRT.texture.format = t3d.PIXEL_FORMAT.RGBA;
+			irradianceRT.texture.generateMipmaps = false;
 
 			// Render Passes
 
@@ -1078,17 +1243,27 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 			inscatterPass.material.defines.INSCATTER_MAPPING = inscatterMapping;
 			inscatterPass.material.defines.INSCATTER_3D = !!use3DInscatterTexture;
 			inscatterPass.material.defines.ALTITUDE_LAYERS = altitudeLayers;
+			const irradiancePass = new t3d.ShaderPostPass(IrradianceShader);
+			irradiancePass.uniforms.transmittanceTexture = transmittanceRT.texture;
+			irradiancePass.uniforms.inscatteringTexture = inscatterRT.texture;
+			irradiancePass.material.defines.TRANSMITTANCE_MAPPING = transmittanceMapping;
+			irradiancePass.material.defines.INSCATTER_MAPPING = inscatterMapping;
+			irradiancePass.material.defines.INSCATTER_3D = !!use3DInscatterTexture;
+			irradiancePass.material.defines.ALTITUDE_LAYERS = altitudeLayers;
 
 			//
 
 			this._transmittanceRT = transmittanceRT;
 			this._inscatterRT = inscatterRT;
+			this._irradianceRT = irradianceRT;
 			this._transmittancePass = transmittancePass;
 			this._inscatterPass = inscatterPass;
+			this._irradiancePass = irradiancePass;
 			this._betaR = betaR;
 			this._data = {
 				transmittanceTexture: transmittanceRT.texture,
 				inscatterTexture: inscatterRT.texture,
+				irradianceTexture: irradianceRT.texture,
 				betaR: betaR,
 				transmittanceMapping: transmittanceMapping,
 				inscatterMapping: inscatterMapping,
@@ -1123,6 +1298,12 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 				renderer.clear(true, true, true);
 				inscatterPass.render(renderer);
 			}
+		}
+		computeIrradiance(renderer) {
+			renderer.setRenderTarget(this._irradianceRT);
+			renderer.setClearColor(0, 0, 0, 0);
+			renderer.clear(true, true, true);
+			this._irradiancePass.render(renderer);
 		}
 		setBetaRayleighDensity(wavelengths, skyTint, atmosphereThickness) {
 			// Sky Tint shifts the value of Wavelengths
@@ -1160,8 +1341,10 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 		dispose() {
 			this._transmittanceRT.dispose();
 			this._inscatterRT.dispose();
+			this._irradianceRT.dispose();
 			this._transmittancePass.dispose();
 			this._inscatterPass.dispose();
+			this._irradiancePass.dispose();
 		}
 	}
 	const _vec3_1 = new t3d.Vector3();
@@ -1174,6 +1357,7 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 			this._data = {
 				transmittanceTexture: null,
 				inscatterTexture: null,
+				irradianceTexture: null,
 				betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 				transmittanceMapping: 2,
 				inscatterMapping: 1,
@@ -1212,6 +1396,13 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 			inscatterTexture.format = t3d.PIXEL_FORMAT.RGBA;
 			inscatterTexture.generateMipmaps = false;
 			this._data.inscatterTexture = inscatterTexture;
+			const irradianceTexture = new t3d.Texture2D();
+			irradianceTexture.minFilter = t3d.TEXTURE_FILTER.LINEAR;
+			irradianceTexture.magFilter = t3d.TEXTURE_FILTER.LINEAR;
+			irradianceTexture.type = type;
+			irradianceTexture.generateMipmaps = false;
+			irradianceTexture.flipY = false;
+			this._data.irradianceTexture = irradianceTexture;
 		}
 		get data() {
 			return this._data;
@@ -1239,9 +1430,21 @@ void ComputeSingleScattering(float r, float mu, float muS, float nu, bool rayInt
 				texture.version++;
 			});
 		}
+		loadIrradianceTexture(url) {
+			return this._fileLoader.loadAsync(url).then(data => {
+				const texture = this._data.irradianceTexture;
+				texture.image = {
+					data: getImageDataFromArrayBuffer(data, texture.type),
+					width: 64,
+					height: 16
+				};
+				texture.version++;
+			});
+		}
 		dispose() {
 			this._data.transmittanceTexture.dispose();
 			this._data.inscatterTexture.dispose();
+			this._data.irradianceTexture.dispose();
 		}
 	}
 	function getImageDataFromArrayBuffer(arrayBuffer, type) {

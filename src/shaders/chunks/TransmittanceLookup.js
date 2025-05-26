@@ -52,12 +52,12 @@ vec3 GetTransmittance(float r, float mu, float d, bool rayIntersectsGround) {
 		return min(
 			GetTransmittanceToTopAtmosphereBoundary(r_d, -mu_d) /
 				GetTransmittanceToTopAtmosphereBoundary(r, -mu)
-			, 1.0);
+			, vec3(1.0));
 	} else {
 		return min(
 			GetTransmittanceToTopAtmosphereBoundary(r, mu) /
 				GetTransmittanceToTopAtmosphereBoundary(r_d, mu_d)
-			, 1.0);
+			, vec3(1.0));
 	}
 }
 `;

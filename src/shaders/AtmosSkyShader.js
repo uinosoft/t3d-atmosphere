@@ -1,6 +1,7 @@
 import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
 import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
 import { InscatterLookup } from './chunks/InscatterLookup.js';
+import { IrradianceLookup } from './chunks/IrradianceLookup.js';
 import { ToneMapping } from './chunks/ToneMapping.js';
 
 export const AtmosSkyShader = {
@@ -15,20 +16,21 @@ export const AtmosSkyShader = {
 		TONE_MAPPING: 5,
 		SRGB_OUTPUT: true,
 
-		GROUND_ALBEDO: false,
+		GROUND_ALBEDO: true,
 
 		SKY_SUNDISK: true
 	},
 	uniforms: {
 		inscatteringTexture: null,
 		transmittanceTexture: null,
+		irradianceTexture: null,
 		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 
 		cameraHeight: 0, // camera height to sealevel
 
 		u_mie_phase_function_g: 0.8,
 
-		u_ground_albedo: [0.01, 0.01, 0.01],
+		u_ground_albedo: [0.15, 0.15, 0.15],
 
 		toneMappingExposure: 10.0,
 
@@ -84,6 +86,8 @@ export const AtmosSkyShader = {
        
         uniform sampler2D transmittanceTexture;
 
+		uniform sampler2D irradianceTexture;
+
 		uniform float u_mie_phase_function_g;
 		uniform vec3 u_ground_albedo;
 
@@ -98,6 +102,7 @@ export const AtmosSkyShader = {
 		${AtmosphereCommon}
 		${TransmittanceLookup}
 		${InscatterLookup}
+		${IrradianceLookup}
 
 		bool RayIntersectsGround(float r, float mu) {
 			return mu < 0.0 && r * r * (mu * mu - 1.0) + Rg * Rg >= 0.0;
@@ -212,6 +217,19 @@ export const AtmosSkyShader = {
 				single_mie_scattering * MiePhaseFunction(u_mie_phase_function_g, nu);
 		}
 
+		vec3 GetSunAndSkyIrradiance(vec3 point, vec3 normal, vec3 sun_direction, out vec3 sky_irradiance) {
+			float r = length(point);
+			float mu_s = dot(point, sun_direction) / r;
+
+			// Indirect irradiance (approximated if the surface is not horizontal).
+			sky_irradiance = GetIrradiance(r, mu_s) * (1.0 + dot(normal, point) / r) * 0.5;
+
+			// Direct irradiance.
+			return solar_irradiance *
+				GetTransmittanceToSun(r, mu_s) *
+				max(dot(normal, sun_direction), 0.0);
+		}
+
 		${ToneMapping}
 
 		#include <dithering_pars_frag>
@@ -230,8 +248,24 @@ export const AtmosSkyShader = {
 					float distance_to_ground = RaySphereFirstIntersection(camera, view_ray, Rg);
 					vec3 ground_point = view_ray * distance_to_ground + camera;
 					vec3 surface_normal = normalize(ground_point);
-					col = GetSkyRadianceToPoint(camera, surface_normal * (Rg + 1.0), sunDirSize.xyz, transmittance);
-					col += transmittance * u_ground_albedo;
+
+					vec3 skyIrradiance;
+					vec3 sunIrradiance = GetSunAndSkyIrradiance(
+						camera,
+						surface_normal, 
+						sunDirSize.xyz, 
+						skyIrradiance
+					);
+
+					vec3 inscatter = GetSkyRadianceToPoint(
+						camera,
+						surface_normal * (Rg + 1.0),
+						sunDirSize.xyz,
+						transmittance
+					);
+
+					vec3 radiance = u_ground_albedo * RECIPROCAL_PI * (sunIrradiance + skyIrradiance);
+					col = transmittance * radiance + inscatter;
 
 					transmittance = vec3(0.0);
 				} else {

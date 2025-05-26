@@ -68,10 +68,14 @@
 			await atmosLUTsLoader.loadInscatterTexture('./assets/scattering.bin');
 			console.timeEnd('load inscatter');
 
+			console.time('load irradiance');
+			await atmosLUTsLoader.loadIrradianceTexture('./assets/irradiance.bin');
+			console.timeEnd('load irradiance');
+
 			const lutsData = atmosLUTsLoader.data;
 
 			const transmittanceHelper = new LUTHelper(lutsData.transmittanceTexture);
-			transmittanceHelper.position.set(-1.1, 0, 0);
+			transmittanceHelper.position.set(-1.1, 0.3, 0);
 			transmittanceHelper.scale.set(2, 1, 0.5);
 			scene.add(transmittanceHelper);
 
@@ -83,6 +87,11 @@
 				inscatterHelper.scale.set(2, 0.5, lutsData.altitudeLayers);
 			}
 			scene.add(inscatterHelper);
+
+			const irradianceHelper = new LUTHelper(lutsData.irradianceTexture);
+			irradianceHelper.position.set(-1.1, -0.3, 0);
+			irradianceHelper.scale.set(2, 1, 0.5);
+			scene.add(irradianceHelper);
 		}
 
 		load();

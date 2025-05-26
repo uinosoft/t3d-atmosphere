@@ -9,6 +9,7 @@ export class AtmosLUTsLoader {
 		this._data = {
 			transmittanceTexture: null,
 			inscatterTexture: null,
+			irradianceTexture: null,
 			betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 			transmittanceMapping: 2,
 			inscatterMapping: 1,
@@ -52,6 +53,14 @@ export class AtmosLUTsLoader {
 		inscatterTexture.format = PIXEL_FORMAT.RGBA;
 		inscatterTexture.generateMipmaps = false;
 		this._data.inscatterTexture = inscatterTexture;
+
+		const irradianceTexture = new Texture2D();
+		irradianceTexture.minFilter = TEXTURE_FILTER.LINEAR;
+		irradianceTexture.magFilter = TEXTURE_FILTER.LINEAR;
+		irradianceTexture.type = type;
+		irradianceTexture.generateMipmaps = false;
+		irradianceTexture.flipY = false;
+		this._data.irradianceTexture = irradianceTexture;
 	}
 
 	get data() {
@@ -83,9 +92,22 @@ export class AtmosLUTsLoader {
 		});
 	}
 
+	loadIrradianceTexture(url) {
+		return this._fileLoader.loadAsync(url).then(data => {
+			const texture = this._data.irradianceTexture;
+			texture.image = {
+				data: getImageDataFromArrayBuffer(data, texture.type),
+				width: 64,
+				height: 16
+			};
+			texture.version++;
+		});
+	}
+
 	dispose() {
 		this._data.transmittanceTexture.dispose();
 		this._data.inscatterTexture.dispose();
+		this._data.irradianceTexture.dispose();
 	}
 
 }

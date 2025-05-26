@@ -1,6 +1,7 @@
 import { PIXEL_TYPE, RenderTarget2D, RenderTarget3D, TEXTURE_FILTER, PIXEL_FORMAT, ShaderPostPass, Vector3, MathUtils } from 't3d';
 import { TransmittanceShader } from './shaders/TransmittanceShader.js';
 import { InscatterShader } from './shaders/InscatterShader.js';
+import { IrradianceShader } from './shaders/IrradianceShader.js';
 
 export class AtmosLUTsGenerator {
 
@@ -65,6 +66,13 @@ export class AtmosLUTsGenerator {
 		inscatterRT.texture.format = PIXEL_FORMAT.RGBA;
 		inscatterRT.texture.generateMipmaps = false;
 
+		const irradianceRT = new RenderTarget2D(64, 16);
+		irradianceRT.texture.minFilter = TEXTURE_FILTER.LINEAR;
+		irradianceRT.texture.magFilter = TEXTURE_FILTER.LINEAR;
+		irradianceRT.texture.type = type;
+		irradianceRT.texture.format = PIXEL_FORMAT.RGBA;
+		irradianceRT.texture.generateMipmaps = false;
+
 		// Render Passes
 
 		const betaR = [5.8e-3, 1.35e-2, 3.31e-2, 1]; // default betaR
@@ -81,19 +89,30 @@ export class AtmosLUTsGenerator {
 		inscatterPass.material.defines.INSCATTER_3D = !!use3DInscatterTexture;
 		inscatterPass.material.defines.ALTITUDE_LAYERS = altitudeLayers;
 
+		const irradiancePass = new ShaderPostPass(IrradianceShader);
+		irradiancePass.uniforms.transmittanceTexture = transmittanceRT.texture;
+		irradiancePass.uniforms.inscatteringTexture = inscatterRT.texture;
+		irradiancePass.material.defines.TRANSMITTANCE_MAPPING = transmittanceMapping;
+		irradiancePass.material.defines.INSCATTER_MAPPING = inscatterMapping;
+		irradiancePass.material.defines.INSCATTER_3D = !!use3DInscatterTexture;
+		irradiancePass.material.defines.ALTITUDE_LAYERS = altitudeLayers;
+
 		//
 
 		this._transmittanceRT = transmittanceRT;
 		this._inscatterRT = inscatterRT;
+		this._irradianceRT = irradianceRT;
 
 		this._transmittancePass = transmittancePass;
 		this._inscatterPass = inscatterPass;
+		this._irradiancePass = irradiancePass;
 
 		this._betaR = betaR;
 
 		this._data = {
 			transmittanceTexture: transmittanceRT.texture,
 			inscatterTexture: inscatterRT.texture,
+			irradianceTexture: irradianceRT.texture,
 			betaR: betaR,
 			transmittanceMapping: transmittanceMapping,
 			inscatterMapping: inscatterMapping,
@@ -131,6 +150,13 @@ export class AtmosLUTsGenerator {
 			renderer.clear(true, true, true);
 			inscatterPass.render(renderer);
 		}
+	}
+
+	computeIrradiance(renderer) {
+		renderer.setRenderTarget(this._irradianceRT);
+		renderer.setClearColor(0, 0, 0, 0);
+		renderer.clear(true, true, true);
+		this._irradiancePass.render(renderer);
 	}
 
 	setBetaRayleighDensity(wavelengths, skyTint, atmosphereThickness) {
@@ -175,9 +201,11 @@ export class AtmosLUTsGenerator {
 	dispose() {
 		this._transmittanceRT.dispose();
 		this._inscatterRT.dispose();
+		this._irradianceRT.dispose();
 
 		this._transmittancePass.dispose();
 		this._inscatterPass.dispose();
+		this._irradiancePass.dispose();
 	}
 
 }

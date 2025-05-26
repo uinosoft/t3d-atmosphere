@@ -58,7 +58,7 @@
 
 		//
 
-		let atmosLUTsGenerator, transmittanceHelper, inscatterHelper;
+		let atmosLUTsGenerator, transmittanceHelper, inscatterHelper, irradianceHelper;
 
 		function precompute() {
 			clear();
@@ -66,18 +66,22 @@
 			atmosLUTsGenerator = new AtmosLUTsGenerator(renderer.capabilities, precomputeOptions);
 			// atmosLUTsGenerator.setBetaRayleighDensity(new t3d.Vector3(680, 550, 440), new t3d.Color3(128 / 255, 128 / 255, 128 / 255, 255 / 255), 1.0);
 
-			console.time('computeTransmittance');
+			console.time('compute transmittance');
 			atmosLUTsGenerator.computeTransmittance(renderer);
-			console.timeEnd('computeTransmittance');
+			console.timeEnd('compute transmittance');
 
-			console.time('computeInscatter');
+			console.time('compute inscatter');
 			atmosLUTsGenerator.computeInscatter(renderer);
-			console.timeEnd('computeInscatter');
+			console.timeEnd('compute inscatter');
+
+			console.time('compute irradiance');
+			atmosLUTsGenerator.computeIrradiance(renderer);
+			console.timeEnd('compute irradiance');
 
 			const lutsData = atmosLUTsGenerator.data;
 
 			transmittanceHelper = new LUTHelper(lutsData.transmittanceTexture);
-			transmittanceHelper.position.set(-1.1, 0, 0);
+			transmittanceHelper.position.set(-1.1, 0.3, 0);
 			transmittanceHelper.scale.set(2, 1, 0.5);
 			scene.add(transmittanceHelper);
 
@@ -89,6 +93,11 @@
 				inscatterHelper.scale.set(2, 0.5, lutsData.altitudeLayers);
 			}
 			scene.add(inscatterHelper);
+
+			irradianceHelper = new LUTHelper(lutsData.irradianceTexture);
+			irradianceHelper.position.set(-1.1, -0.3, 0);
+			irradianceHelper.scale.set(2, 1, 0.5);
+			scene.add(irradianceHelper);
 		}
 
 		function clear() {

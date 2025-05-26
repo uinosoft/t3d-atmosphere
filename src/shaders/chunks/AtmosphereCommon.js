@@ -8,6 +8,11 @@ const float RES_NU = 8.;	// table per texture depth
 
 const vec2 TRANSMISSION_SIZE = vec2(256., 64.); // 256x64
 
+const float IRRADIANCE_TEXTURE_WIDTH = 64.;
+const float IRRADIANCE_TEXTURE_HEIGHT = 16.;
+
+const vec3 solar_irradiance = vec3(1.474, 1.8504, 1.91198);
+
 // ---------------------------------------------------------------------------- 
 // UTILITY FUNCTIONS
 // ---------------------------------------------------------------------------- 
