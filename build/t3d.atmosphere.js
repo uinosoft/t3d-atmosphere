@@ -1070,10 +1070,9 @@ void GetRMuSFromIrradianceUv(vec2 uv, out float r, out float mu_s) {
 }
 
 const float sun_angular_radius = 0.004675; // radians
-const float rad = 0.017453292519943295; // degrees to radians
 
 vec3 ComputeDirectIrradiance(float r, float mu_s) {
-	float alpha_s = sun_angular_radius / rad;
+	float alpha_s = sun_angular_radius;
 	// Approximate average of the cosine factor mu_s over the visible fraction of
 	// the Sun disc.
 	float average_cosine_factor =
@@ -1097,7 +1096,7 @@ vec3 ComputeIndirectIrradiance(float r, float mu_s) {
 			float phi = (float(i) + 0.5) * dphi;
 			vec3 omega =
 				vec3(cos(phi) * sin(theta), sin(phi) * sin(theta), cos(theta));
-			float domega = (dtheta / rad) * (dphi / rad) * sin(theta);
+			float domega = dtheta * dphi * sin(theta);
 
 			float nu = dot(omega, omega_s);
 
@@ -1159,7 +1158,7 @@ vec3 ComputeIndirectIrradiance(float r, float mu_s) {
 				void main() {
 						float r, mu_s;
 			GetRMuSFromIrradianceUv(v_Uv, r, mu_s);
-			gl_FragColor = vec4(ComputeIndirectIrradiance(r, mu_s) * 0.0006, 1.0);
+			gl_FragColor = vec4(ComputeIndirectIrradiance(r, mu_s), 1.0);
 				}
 		`
 	};

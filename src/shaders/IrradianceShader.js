@@ -49,7 +49,7 @@ export const IrradianceShader = {
         void main() {
             float r, mu_s;
 			GetRMuSFromIrradianceUv(v_Uv, r, mu_s);
-			gl_FragColor = vec4(ComputeIndirectIrradiance(r, mu_s) * 0.0006, 1.0);
+			gl_FragColor = vec4(ComputeIndirectIrradiance(r, mu_s), 1.0);
         }
     `
 };
