@@ -30,7 +30,7 @@
 		import * as t3d from 't3d';
 		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosUtils } from 't3d-atmosphere';
 		import { Pane } from 'tweakpane';
 
 		let width = window.innerWidth || 2;
@@ -58,7 +58,7 @@
 
 		// scene
 
-		const ambientLight = new t3d.AmbientLight(0x77aaff, 0.3);
+		const ambientLight = new t3d.AmbientLight(0x77aaff, 0.2);
 		scene.add(ambientLight);
 
 		const sphereGeometry = new t3d.SphereGeometry(0.5, 20, 20);
@@ -100,26 +100,41 @@
 				atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
 				// atmosLUTsGenerator.setBetaRayleighDensity(new t3d.Vector3(680, 550, 440), new t3d.Color3(128 / 255, 128 / 255, 128 / 255, 255 / 255), 1.0);
 
-				console.time('computeTransmittance');
+				console.time('compute transmittance');
 				atmosLUTsGenerator.computeTransmittance(forwardRenderer);
-				console.timeEnd('computeTransmittance');
+				console.timeEnd('compute transmittance');
 
-				console.time('computeInscatter');
+				console.time('compute inscatter');
 				atmosLUTsGenerator.computeInscatter(forwardRenderer);
-				console.timeEnd('computeInscatter');
+				console.timeEnd('compute inscatter');
+
+				// get transmittance pixels for sun light color calculation
+				console.time('read transmittance pixels');
+				const transmittanceRT = atmosLUTsGenerator._transmittanceRT;
+				const { width, height } = transmittanceRT;
+				const data = transmittanceRT.texture.type === t3d.PIXEL_TYPE.FLOAT ?
+					new Float32Array(width * height * 4) :
+					new Uint16Array(width * height * 4);
+				forwardRenderer.setRenderTarget(transmittanceRT);
+				forwardRenderer.readRenderTargetPixels(
+					0, 0, width, height,
+					data
+				);
+				transmittanceRT.texture.image.data = data;
+				console.timeEnd('read transmittance pixels');
 
 				return atmosLUTsGenerator.data;
 			} else {
 				if (!atmosLUTsLoader) {
 					atmosLUTsLoader = new AtmosLUTsLoader(forwardRenderer.capabilities);
 
-					console.time('loadTransmittance');
+					console.time('load transmittance');
 					await atmosLUTsLoader.loadTransmittanceTexture('./assets/transmittance.bin');
-					console.timeEnd('loadTransmittance');
+					console.timeEnd('load transmittance');
 
-					console.time('loadInscatter');
+					console.time('load inscatter');
 					await atmosLUTsLoader.loadInscatterTexture('./assets/scattering.bin');
-					console.timeEnd('loadInscatter');
+					console.timeEnd('load inscatter');
 				}
 
 				return atmosLUTsLoader.data;
@@ -135,7 +150,7 @@
 		skyMaterial.defines.BACKGROUND = true;
 		skyMaterial.uniforms.cameraHeight = 400;
 
-		const directionalLight = new t3d.DirectionalLight(0xffffff, 0.5);
+		const directionalLight = new t3d.DirectionalLight(0xffffff, 0.6);
 		directionalLight.position.set(-10, 20, 30);
 		directionalLight.castShadow = true;
 		directionalLight.shadow.windowSize = 3;
@@ -144,8 +159,9 @@
 		const sunAngles = { x: -23, y: 17 };
 		const spherical = new t3d.Spherical(50, 0, 0);
 		const vector3 = new t3d.Vector3();
+		const cameraPosition = new t3d.Vector3();
 
-		function setSunAndMoonDir() {
+		function setSunLightDirection() {
 			spherical.phi = Math.PI / 2 - sunAngles.y * Math.PI / 180;
 			spherical.theta = Math.PI - sunAngles.x * Math.PI / 180;
 			vector3.setFromSpherical(spherical);
@@ -154,13 +170,20 @@
 			directionalLight.lookAt(new t3d.Vector3(), new t3d.Vector3(0, 1, 0));
 
 			vector3.normalize();
-
 			vector3.toArray(skyMaterial.uniforms['sunDirSize']);
+		}
+
+		function setSunLightColor() {
+			vector3.fromArray(skyMaterial.uniforms['sunDirSize']);
+			cameraPosition.set(0, skyMaterial.uniforms.cameraHeight + 6360000, 0);
+			AtmosUtils.getSunLightColor(skyMaterial.uniforms.transmittanceTexture, cameraPosition, vector3, directionalLight.color);
+			directionalLight.color.convertLinearToSRGB();
 		}
 
 		getLUTsData().then(lutsData => {
 			sky.setLUTs(lutsData);
-			setSunAndMoonDir();
+			setSunLightDirection();
+			setSunLightColor();
 		});
 
 		// gui
@@ -216,6 +239,7 @@
 				oldCameraHeight = skyMaterial.uniforms.cameraHeight;
 			} else {
 				skyMaterial.uniforms.cameraHeight = oldCameraHeight;
+				setSunLightColor();
 			}
 			altitudeControl.disabled = !value;
 			skyMaterial.needsUpdate = true;
@@ -224,6 +248,8 @@
 			min: 0,
 			max: 70000,
 			label: 'Altitude'
+		}).on('change', () => {
+			setSunLightColor();
 		});
 
 		const miePhaseFolder = pane.addFolder({
@@ -266,7 +292,8 @@
 			expanded: true,
 			picker: 'inline'
 		}).on('change', () => {
-			setSunAndMoonDir();
+			setSunLightDirection();
+			setSunLightColor();
 		});
 		sunFolder.addBinding(skyMaterial.defines, 'SKY_SUNDISK', {
 			label: 'Disk'
