@@ -108,6 +108,10 @@
 				atmosLUTsGenerator.computeInscatter(forwardRenderer);
 				console.timeEnd('compute inscatter');
 
+				console.time('compute irradiance');
+				atmosLUTsGenerator.computeIrradiance(forwardRenderer);
+				console.timeEnd('compute irradiance');
+
 				// get transmittance pixels for sun light color calculation
 				console.time('read transmittance pixels');
 				const transmittanceRT = atmosLUTsGenerator._transmittanceRT;
@@ -135,6 +139,10 @@
 					console.time('load inscatter');
 					await atmosLUTsLoader.loadInscatterTexture('./assets/scattering.bin');
 					console.timeEnd('load inscatter');
+
+					console.time('load irradiance');
+					await atmosLUTsLoader.loadIrradianceTexture('./assets/irradiance.bin');
+					console.timeEnd('load irradiance');
 				}
 
 				return atmosLUTsLoader.data;
