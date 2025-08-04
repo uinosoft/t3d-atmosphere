@@ -156,7 +156,7 @@
 
 		const skyMaterial = sky.material;
 		skyMaterial.defines.BACKGROUND = true;
-		skyMaterial.uniforms.cameraHeight = 400;
+		skyMaterial.uniforms.cameraPosition = [0, 400 + 6360000, 0];
 
 		const directionalLight = new t3d.DirectionalLight(0xffffff, 0.6);
 		directionalLight.position.set(-10, 20, 30);
@@ -183,7 +183,7 @@
 
 		function setSunLightColor() {
 			vector3.fromArray(skyMaterial.uniforms['sunDirSize']);
-			cameraPosition.set(0, skyMaterial.uniforms.cameraHeight + 6360000, 0);
+			cameraPosition.fromArray(skyMaterial.uniforms.cameraPosition);
 			AtmosUtils.getSunLightColor(skyMaterial.uniforms.transmittanceTexture, cameraPosition, vector3, directionalLight.color);
 			directionalLight.color.convertLinearToSRGB();
 		}
@@ -195,8 +195,6 @@
 		});
 
 		// gui
-
-		let oldCameraHeight = 0;
 
 		const pane = new Pane();
 
@@ -240,23 +238,29 @@
 		const altitudeFolder = pane.addFolder({
 			title: 'Altitude'
 		});
-		altitudeFolder.addBinding(skyMaterial.defines, 'BACKGROUND', {
+		const altitudeParams = {
+			fixedAltitude: skyMaterial.defines.BACKGROUND,
+			cameraHeight: skyMaterial.uniforms.cameraPosition[1] - 6360000
+		};
+		altitudeFolder.addBinding(altitudeParams, 'fixedAltitude', {
 			label: 'Fixed Altitude'
 		}).on('change', ({ value }) => {
-			if (!value) {
-				oldCameraHeight = skyMaterial.uniforms.cameraHeight;
-			} else {
-				skyMaterial.uniforms.cameraHeight = oldCameraHeight;
+			if (value) {
+				skyMaterial.uniforms.cameraPosition = [0, altitudeParams.cameraHeight + 6360000, 0];
 				setSunLightColor();
 			}
-			altitudeControl.disabled = !value;
+			skyMaterial.defines.BACKGROUND = value;
 			skyMaterial.needsUpdate = true;
+			altitudeControl.disabled = !value;
 		});
-		const altitudeControl = altitudeFolder.addBinding(skyMaterial.uniforms, 'cameraHeight', {
-			min: 0,
+		const altitudeControl = altitudeFolder.addBinding(altitudeParams, 'cameraHeight', {
+			min: 1,
 			max: 70000,
 			label: 'Altitude'
-		}).on('change', () => {
+		}).on('change', ({ value }) => {
+			if (altitudeParams.fixedAltitude) {
+				skyMaterial.uniforms.cameraPosition = [0, value + 6360000, 0];
+			}
 			setSunLightColor();
 		});
 
@@ -359,8 +363,12 @@
 
 			controller.update();
 
-			if (!skyMaterial.defines.BACKGROUND) {
-				skyMaterial.uniforms.cameraHeight = camera.position.y;
+			if (!altitudeParams.fixedAltitude) {
+				skyMaterial.uniforms.cameraPosition = [
+					0,
+					Math.max(1.0, camera.position.y + 6360000),
+					0
+				];
 			}
 
 			forwardRenderer.render(scene, camera);

@@ -443,7 +443,10 @@ const AtmosSkyShader = {
 		irradianceTexture: null,
 		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 
-		cameraHeight: 0, // camera height to sealevel
+		// Camera position in atmosphere coordinates, where the center of the Earth is at (0, 0, 0) and the radius is Rg.
+		// If the external world coordinate system is not consistent with the atmosphere coordinate system
+		// (for example, in the case of the Earth being an ellipsoid), coordinate transformation is required.
+		cameraPosition: [0, 0, 0],
 
 		u_mie_phase_function_g: 0.8,
 
@@ -462,11 +465,11 @@ const AtmosSkyShader = {
 		uniform mat4 u_View;
 		uniform mat4 u_Model;
 
-        uniform float cameraHeight;
+		uniform vec3 cameraPosition;
 
         uniform vec4 sunDirSize;
 
-        varying vec4 vWorldPosAndCamY;
+        varying vec3 vWorldPos;
 
 		mat4 clearMat4Translate(mat4 m) {
 			mat4 outMatrix = m;
@@ -478,15 +481,11 @@ const AtmosSkyShader = {
 			mat4 modelMatrix = clearMat4Translate(u_Model);
 			mat4 viewMatrix = clearMat4Translate(u_View);
 
-            vWorldPosAndCamY.xyz = (modelMatrix * vec4(a_Position, 0.0)).xyz;
-
 			#ifdef BACKGROUND
-				vWorldPosAndCamY.xyz = (modelMatrix * vec4(a_Position, 0.0)).xyz;
+				vWorldPos.xyz = (modelMatrix * vec4(a_Position, 0.0)).xyz;
 			#else
-				vWorldPosAndCamY.xyz = a_Position;
+				vWorldPos.xyz = a_Position;
 			#endif
-
-			vWorldPosAndCamY.w = max(cameraHeight, 1.0); // no lower than sealevel
 
 			gl_Position = u_Projection * viewMatrix * modelMatrix * vec4(a_Position, 1.0);
 			gl_Position.z = gl_Position.w;
@@ -510,7 +509,9 @@ const AtmosSkyShader = {
 
         uniform float toneMappingExposure;
 
-        varying vec4 vWorldPosAndCamY;
+		uniform vec3 cameraPosition;
+
+        varying vec3 vWorldPos;
 
         const float Rg = 6360000.0;
         const float Rt = 6420000.0;
@@ -652,8 +653,8 @@ const AtmosSkyShader = {
 		#include <dithering_pars_frag>
 
         void main() {
-			vec3 camera = vec3(0.0, vWorldPosAndCamY.w + Rg, 0.0);
-            vec3 view_ray = normalize(vWorldPosAndCamY.xyz);
+			vec3 camera = cameraPosition;
+            vec3 view_ray = normalize(vWorldPos.xyz);
             float nu = dot(view_ray, sunDirSize.xyz);
 
 			vec3 col = vec3(0.0);
