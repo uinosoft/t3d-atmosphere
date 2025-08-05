@@ -1,5 +1,5 @@
 // t3d-atmosphere
-import { Mesh, ShaderMaterial, DRAW_SIDE, SphereGeometry, Vector3, PIXEL_TYPE, RenderTarget2D, TEXTURE_FILTER, PIXEL_FORMAT, RenderTarget3D, ShaderPostPass, MathUtils, FileLoader, Texture2D, Texture3D, Vector2, Color3 } from 't3d';
+import { Mesh, ShaderMaterial, DRAW_SIDE, SphereGeometry, MathUtils, Vector3, Vector2, Color3, SphericalHarmonicsLight, PIXEL_TYPE, RenderTarget2D, TEXTURE_FILTER, PIXEL_FORMAT, RenderTarget3D, ShaderPostPass, FileLoader, Texture2D, Texture3D } from 't3d';
 
 const AtmosphereCommon = /* glsl */`
 uniform vec4 betaR;
@@ -761,6 +761,239 @@ class AtmosSky extends Mesh {
 
 }
 
+const vectorScratch1$2 = /* #__PURE__ */ new Vector3();
+const vectorScratch2$2 = /* #__PURE__ */ new Vector3();
+const vectorScratch3 = /* #__PURE__ */ new Vector3();
+
+function getImageData(texture) {
+	if (texture.image.data) {
+		return texture.image.data;
+	}
+
+	if (texture.userData.imageData) {
+		return texture.userData.imageData;
+	}
+
+	return undefined;
+}
+
+function samplePixel(data, index, result) {
+	const dataIndex = index * 4; // Assume RGBA
+	return result.fromArray(data, dataIndex, true);
+}
+
+function sampleTexture(texture, uv, result) {
+	const data = getImageData(texture);
+	if (data == null) {
+		return result.setScalar(0);
+	}
+
+	const { width, height } = texture.image;
+	const x = MathUtils.clamp(uv.x, 0, 1) * (width - 1);
+	const y = MathUtils.clamp(uv.y, 0, 1) * (height - 1);
+	const xi = Math.floor(x);
+	const yi = Math.floor(y);
+	const tx = x - xi;
+	const ty = y - yi;
+	const sx = tx;
+	const sy = ty;
+	const rx0 = xi % width;
+	const rx1 = (rx0 + 1) % width;
+	const ry0 = yi % height;
+	const ry1 = (ry0 + 1) % height;
+	const v00 = samplePixel(data, ry0 * width + rx0, vectorScratch1$2);
+	const v10 = samplePixel(data, ry0 * width + rx1, vectorScratch2$2);
+	const nx0 = v00.lerp(v10, sx);
+	const v01 = samplePixel(data, ry1 * width + rx0, vectorScratch2$2);
+	const v11 = samplePixel(data, ry1 * width + rx1, vectorScratch3);
+	const nx1 = v01.lerp(v11, sx);
+	return result.copy(nx0.lerp(nx1, sy));
+}
+
+function getAltitudeCorrectionOffset(cameraPosition, bottomRadius, ellipsoid, result) {
+	const surfacePosition = ellipsoid.getPositionToSurfacePoint(cameraPosition, vectorScratch1$1);
+
+	return surfacePosition != null
+		? getOsculatingSphereCenter(ellipsoid, surfacePosition, bottomRadius, result)
+			.negate()
+		: result.setScalar(0);
+}
+
+function getOsculatingSphereCenter(
+	ellipsoid,
+	surfacePosition,
+	radius,
+	result
+) {
+	const a2 = ellipsoid.radius.x ** 2;
+	const b2 = ellipsoid.radius.z ** 2;
+	const normal = vectorScratch2$1
+		.set(
+			surfacePosition.x / a2,
+			surfacePosition.y / a2,
+			surfacePosition.z / b2
+		)
+		.normalize();
+	return result.copy(normal.multiplyScalar(-radius).add(surfacePosition));
+}
+
+function getSunLightColor(transmittanceTexture, worldPosition, sunDirection, target = new Color3()) {
+	const camera = vectorScratch1$1.copy(worldPosition);
+	const transmittance = vectorScratch2$1;
+
+	let r = camera.getLength();
+	let rmu = camera.dot(sunDirection);
+
+	const distanceToTopAtmosphereBoundary = -rmu - Math.sqrt(rmu ** 2 - r ** 2 + topRadius ** 2);
+
+	if (distanceToTopAtmosphereBoundary > 0) {
+		r = topRadius;
+		rmu += distanceToTopAtmosphereBoundary;
+	}
+
+	if (r > topRadius) {
+		transmittance.set(1, 1, 1);
+	} else {
+		const mu = rmu / r;
+		const rayRMuIntersectsGround = rayIntersectsGround(r, mu);
+		if (rayRMuIntersectsGround) {
+			transmittance.setScalar(0);
+		} else {
+			const uv = getUvFromRMu(r, mu, uvScratch$1);
+			sampleTexture(transmittanceTexture, uv, transmittance);
+		}
+	}
+
+	const radiance = transmittance.multiply(solarIrradiance);
+	return target.setRGB(radiance.x, radiance.y, radiance.z);
+}
+
+function safeSqrt(a) {
+	return Math.sqrt(Math.max(a, 0));
+}
+
+function clampDistance(d) {
+	return Math.max(d, 0);
+}
+
+function rayIntersectsGround(r, mu) {
+	return mu < 0 && r ** 2 * (mu ** 2 - 1) + bottomRadius ** 2 >= 0;
+}
+
+function distanceToTopAtmosphereBoundary(r, mu) {
+	const discriminant = r ** 2 * (mu ** 2 - 1) + topRadius ** 2;
+	return clampDistance(-r * mu + safeSqrt(discriminant));
+}
+
+function getTextureCoordFromUnitRange(x, textureSize) {
+	return 0.5 / textureSize + x * (1 - 1 / textureSize);
+}
+
+function getUvFromRMu(r, mu, result) {
+	const H = Math.sqrt(topRadius ** 2 - bottomRadius ** 2);
+	const rho = safeSqrt(r ** 2 - bottomRadius ** 2);
+	const d = distanceToTopAtmosphereBoundary(r, mu);
+	const dMin = topRadius - r;
+	const dMax = rho + H;
+	const xmu = (d - dMin) / (dMax - dMin);
+	const xr = rho / H;
+	return result.set(
+		getTextureCoordFromUnitRange(xmu, TRANSMITTANCE_TEXTURE_WIDTH),
+		getTextureCoordFromUnitRange(xr, TRANSMITTANCE_TEXTURE_HEIGHT)
+	);
+}
+
+
+
+const solarIrradiance = new Vector3(1.474, 1.8504, 1.91198);
+const bottomRadius = 6360000;
+const topRadius = 6420000;
+const TRANSMITTANCE_TEXTURE_WIDTH = 256;
+const TRANSMITTANCE_TEXTURE_HEIGHT = 64;
+const IRRADIANCE_TEXTURE_WIDTH = 64;
+const IRRADIANCE_TEXTURE_HEIGHT = 16;
+
+const vectorScratch1$1 = new Vector3();
+const vectorScratch2$1 = new Vector3();
+const uvScratch$1 = new Vector2();
+
+var AtmosUtils = /*#__PURE__*/Object.freeze({
+	__proto__: null,
+	IRRADIANCE_TEXTURE_HEIGHT: IRRADIANCE_TEXTURE_HEIGHT,
+	IRRADIANCE_TEXTURE_WIDTH: IRRADIANCE_TEXTURE_WIDTH,
+	bottomRadius: bottomRadius,
+	getAltitudeCorrectionOffset: getAltitudeCorrectionOffset,
+	getSunLightColor: getSunLightColor,
+	getTextureCoordFromUnitRange: getTextureCoordFromUnitRange,
+	topRadius: topRadius
+});
+
+function getUvFromRMuS(r, muS, result) {
+	const xR = (r - bottomRadius) / (topRadius - bottomRadius);
+	const xMuS = muS * 0.5 + 0.5;
+	return result.set(
+		getTextureCoordFromUnitRange(xMuS, IRRADIANCE_TEXTURE_WIDTH),
+		getTextureCoordFromUnitRange(xR, IRRADIANCE_TEXTURE_HEIGHT)
+	);
+}
+
+// Our target is: (1 + dot(n, p)) * 0.5
+// Constant term: L0 * sqrt(π)/2 == 0.5
+// Linear term: L1 * π/3 * sqrt(3)/sqrt(π) == n/2
+// See: https://github.com/mrdoob/three.js/blob/r170/src/math/SphericalHarmonics3.js#L85
+// See also: https://www.ppsloan.org/publications/StupidSH36.pdf
+const L0_COEFF = 1 / Math.sqrt(Math.PI);
+const L1_COEFF = Math.sqrt(3) / (2 * Math.sqrt(Math.PI));
+
+const vectorScratch1 = /* #__PURE__ */ new Vector3();
+const vectorScratch2 = /* #__PURE__ */ new Vector3();
+const uvScratch = /* #__PURE__ */ new Vector2();
+
+const LUMINANCE_COEFFS = /* #__PURE__ */ new Vector3(0.2126, 0.7152, 0.0722);
+const skyRadianceToLuminance = new Vector3(114974.916437, 71305.954816, 65310.548555);
+const sunRadianceToLuminance = new Vector3(98242.786222, 69954.398112, 66475.012354);
+const luminance = LUMINANCE_COEFFS.dot(sunRadianceToLuminance);
+const skyRadianceToRelativeLuminance = new Vector3().copy(skyRadianceToLuminance).multiplyScalar(1 / luminance);
+
+class AtmosSkyLight extends SphericalHarmonicsLight {
+
+	constructor(params) {
+		super();
+		const {
+			irradianceTexture = null,
+			ellipsoid,
+			sunDirection
+		} = params;
+
+		this.irradianceTexture = irradianceTexture;
+		this.ellipsoid = ellipsoid;
+		this.sunDirection = sunDirection?.clone() ?? new Vector3();
+	}
+
+	update(cameraPosition) {
+		if (this.irradianceTexture == null) {
+			return;
+		}
+
+		const cameraPositionECEF = vectorScratch1.copy(cameraPosition);
+
+		 const r = cameraPositionECEF.getLength();
+		 const muS = cameraPositionECEF.dot(this.sunDirection) / r;
+		 const uv = getUvFromRMuS(r, muS, uvScratch);
+		const irradiance = sampleTexture(this.irradianceTexture, uv, vectorScratch2);
+		irradiance.multiply(skyRadianceToRelativeLuminance);
+
+		const normal = this.ellipsoid
+			.getPositionToNormal(cameraPositionECEF, vectorScratch1);
+		const coefficients = this.sh.coefficients;
+		coefficients[0].copy(irradiance).multiplyScalar(L0_COEFF);
+		coefficients[1].copy(irradiance).multiplyScalar(L1_COEFF * normal.y);
+		coefficients[2].copy(irradiance).multiplyScalar(L1_COEFF * normal.z);
+		coefficients[3].copy(irradiance).multiplyScalar(L1_COEFF * normal.x);
+	}
+
+}
+
 const PrecomputeCommon = /* glsl */`
 // The radius of the planet (Rg), radius of the atmosphere (Rt),  atmosphere limit (RL)
 const float Rg = 6360.0;
@@ -1328,6 +1561,17 @@ class AtmosLUTsGenerator {
 		this._irradiancePass.render(renderer);
 	}
 
+	readIrradiancePixels(renderer) {
+		const { width, height, texture } = this._irradianceRT;
+		const imageData =
+			texture.type === PIXEL_TYPE.HALF_FLOAT
+				? new Uint16Array(width * height * 4)
+				: new Float32Array(width * height * 4);
+		renderer.setRenderTarget(this._irradianceRT);
+		renderer.readRenderTargetPixels(0, 0, width, height, imageData);
+		texture.userData.imageData = imageData;
+	}
+
 	setBetaRayleighDensity(wavelengths, skyTint, atmosphereThickness) {
 		// Sky Tint shifts the value of Wavelengths
 		const variableRangeWavelengths = _vec3_1.set(
@@ -1514,148 +1758,4 @@ function getImageDataFromArrayBuffer(arrayBuffer, type) {
 	}
 }
 
-function getAltitudeCorrectionOffset(cameraPosition, bottomRadius, ellipsoid, result) {
-	const surfacePosition = ellipsoid.getPositionToSurfacePoint(cameraPosition, vectorScratch1);
-
-	return surfacePosition != null
-		? getOsculatingSphereCenter(ellipsoid, surfacePosition, bottomRadius, result)
-			.negate()
-		: result.setScalar(0);
-}
-
-function getOsculatingSphereCenter(
-	ellipsoid,
-	surfacePosition,
-	radius,
-	result
-) {
-	const a2 = ellipsoid.radius.x ** 2;
-	const b2 = ellipsoid.radius.z ** 2;
-	const normal = vectorScratch2
-		.set(
-			surfacePosition.x / a2,
-			surfacePosition.y / a2,
-			surfacePosition.z / b2
-		)
-		.normalize();
-	return result.copy(normal.multiplyScalar(-radius).add(surfacePosition));
-}
-
-function getSunLightColor(transmittanceTexture, worldPosition, sunDirection, target = new Color3()) {
-	const camera = vectorScratch1.copy(worldPosition);
-	const transmittance = vectorScratch2;
-
-	let r = camera.getLength();
-	let rmu = camera.dot(sunDirection);
-
-	const distanceToTopAtmosphereBoundary = -rmu - Math.sqrt(rmu ** 2 - r ** 2 + topRadius ** 2);
-
-	if (distanceToTopAtmosphereBoundary > 0) {
-		r = topRadius;
-		rmu += distanceToTopAtmosphereBoundary;
-	}
-
-	if (r > topRadius) {
-		transmittance.set(1, 1, 1);
-	} else {
-		const mu = rmu / r;
-		const rayRMuIntersectsGround = rayIntersectsGround(r, mu);
-		if (rayRMuIntersectsGround) {
-			transmittance.setScalar(0);
-		} else {
-			const uv = getUvFromRMu(r, mu, uvScratch);
-			sampleTexture(transmittanceTexture, uv, transmittance);
-		}
-	}
-
-	const radiance = transmittance.multiply(solarIrradiance);
-	return target.setRGB(radiance.x, radiance.y, radiance.z);
-}
-
-function safeSqrt(a) {
-	return Math.sqrt(Math.max(a, 0));
-}
-
-function clampDistance(d) {
-	return Math.max(d, 0);
-}
-
-function rayIntersectsGround(r, mu) {
-	return mu < 0 && r ** 2 * (mu ** 2 - 1) + bottomRadius ** 2 >= 0;
-}
-
-function distanceToTopAtmosphereBoundary(r, mu) {
-	const discriminant = r ** 2 * (mu ** 2 - 1) + topRadius ** 2;
-	return clampDistance(-r * mu + safeSqrt(discriminant));
-}
-
-function getTextureCoordFromUnitRange(x, textureSize) {
-	return 0.5 / textureSize + x * (1 - 1 / textureSize);
-}
-
-function getUvFromRMu(r, mu, result) {
-	const H = Math.sqrt(topRadius ** 2 - bottomRadius ** 2);
-	const rho = safeSqrt(r ** 2 - bottomRadius ** 2);
-	const d = distanceToTopAtmosphereBoundary(r, mu);
-	const dMin = topRadius - r;
-	const dMax = rho + H;
-	const xmu = (d - dMin) / (dMax - dMin);
-	const xr = rho / H;
-	return result.set(
-		getTextureCoordFromUnitRange(xmu, TRANSMITTANCE_TEXTURE_WIDTH),
-		getTextureCoordFromUnitRange(xr, TRANSMITTANCE_TEXTURE_HEIGHT)
-	);
-}
-
-function samplePixel(data, index, result) {
-	const dataIndex = index * 4; // Assume RGBA
-	return result.fromArray(data, dataIndex, true);
-}
-
-function sampleTexture(texture, uv, result) {
-	const { width, height } = texture.image;
-	const data = texture.image.data;
-
-	const x = MathUtils.clamp(uv.x, 0, 1) * (width - 1);
-	const y = MathUtils.clamp(uv.y, 0, 1) * (height - 1);
-	const xi = Math.floor(x);
-	const yi = Math.floor(y);
-	const tx = x - xi;
-	const ty = y - yi;
-	const sx = tx;
-	const sy = ty;
-	const rx0 = xi % width;
-	const rx1 = (rx0 + 1) % width;
-	const ry0 = yi % height;
-	const ry1 = (ry0 + 1) % height;
-	const v00 = samplePixel(data, ry0 * width + rx0, vectorScratch4);
-	const v10 = samplePixel(data, ry0 * width + rx1, vectorScratch5);
-	const nx0 = v00.lerp(v10, sx);
-	const v01 = samplePixel(data, ry1 * width + rx0, vectorScratch6);
-	const v11 = samplePixel(data, ry1 * width + rx1, vectorScratch7);
-	const nx1 = v01.lerp(v11, sx);
-	return result.copy(nx0.lerp(nx1, sy));
-}
-
-const solarIrradiance = new Vector3(1.474, 1.8504, 1.91198);
-const bottomRadius = 6360000;
-const topRadius = 6420000;
-const TRANSMITTANCE_TEXTURE_WIDTH = 256;
-const TRANSMITTANCE_TEXTURE_HEIGHT = 64;
-
-const vectorScratch1 = new Vector3();
-const vectorScratch2 = new Vector3();
-const vectorScratch4 = new Vector3();
-const vectorScratch5 = new Vector3();
-const vectorScratch6 = new Vector3();
-const vectorScratch7 = new Vector3();
-const uvScratch = new Vector2();
-
-var AtmosUtils = /*#__PURE__*/Object.freeze({
-	__proto__: null,
-	getAltitudeCorrectionOffset: getAltitudeCorrectionOffset,
-	getSunLightColor: getSunLightColor,
-	sampleTexture: sampleTexture
-});
-
-export { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosUtils };
+export { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosSkyLight, AtmosUtils };

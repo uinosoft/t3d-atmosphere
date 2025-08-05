@@ -8,7 +8,7 @@
 </head>
 <body>
     <div id="info">
-        <a href="" target="_blank">t3d-atmosphere</a> - globe sky
+        <a href="" target="_blank">t3d-atmosphere</a> - globe sky (WIP)
     </div>
 
 	<!-- Import maps polyfill -->
@@ -32,7 +32,7 @@
 		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { DRACOLoader } from 't3d/addons/loaders/DRACOLoader.js';
 		import { TilesRenderer, CesiumIonAuthPlugin, ReorientationPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosUtils } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosSkyLight, AtmosUtils } from 't3d-atmosphere';
 		import ionAccessToken from './ionAccessToken.js';
 		import { Pane } from 'tweakpane';
 
@@ -114,18 +114,25 @@
 		// luts
 
 		const precomputeOptions = {
-			source: 'generator',
+			source: 'loader',
 			transmittanceMapping: 2,
 			use3DInscatterTexture: true,
 			altitudeLayers: 4
 		};
 
-		let atmosLUTsGenerator, atmosLUTsLoader;
+		let atmosLUTsGenerator, atmosLUTsLoader, skyLight;
 
 		async function getLUTsData() {
+			if (skyLight) {
+				scene.remove(skyLight);
+				skyLight = null;
+			}
+		
 			if (atmosLUTsGenerator) {
 				atmosLUTsGenerator.dispose();
 			}
+
+			let resultData;
 
 			if (precomputeOptions.source === 'generator') {
 				atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
@@ -158,7 +165,9 @@
 				transmittanceRT.texture.image.data = data;
 				console.timeEnd('read transmittance pixels');
 
-				return atmosLUTsGenerator.data;
+				atmosLUTsGenerator.readIrradiancePixels(forwardRenderer);
+
+				resultData = atmosLUTsGenerator.data;
 			} else {
 				if (!atmosLUTsLoader) {
 					atmosLUTsLoader = new AtmosLUTsLoader(forwardRenderer.capabilities);
@@ -176,8 +185,20 @@
 					console.timeEnd('load irradiance');
 				}
 
-				return atmosLUTsLoader.data;
+				resultData = atmosLUTsLoader.data;
 			}
+
+			skyLight = createSkyLight(resultData);
+			scene.add(skyLight);
+
+			return resultData;
+		}
+
+		function createSkyLight(luts) {
+			return new AtmosSkyLight({
+				irradianceTexture: luts.irradianceTexture,
+				ellipsoid: tiles.ellipsoid
+			});
 		}
 
 		// sky and sun
@@ -188,7 +209,7 @@
 		const skyMaterial = sky.material;
 		skyMaterial.defines.BACKGROUND = false;
 
-		const directionalLight = new t3d.DirectionalLight(0xffffff, 1.6);
+		const directionalLight = new t3d.DirectionalLight(0xffffff, 2.0);
 		directionalLight.position.set(-10, 20, 30);
 		directionalLight.castShadow = true;
 		directionalLight.shadow.windowSize = 3;
@@ -368,6 +389,11 @@
 		
 			AtmosUtils.getAltitudeCorrectionOffset(camera.position, 6360000, tiles.ellipsoid, altitudeCorrectionOffset);
 			_cameraPosition.addVectors(camera.position, altitudeCorrectionOffset).toArray(skyMaterial.uniforms.cameraPosition);
+
+			if (skyLight) {
+				skyLight.sunDirection.fromArray(skyMaterial.uniforms['sunDirSize']);
+				skyLight.update(_cameraPosition.normalize().multiplyScalar(6360000 + 1));
+			}
 
 			forwardRenderer.render(scene, camera);
 		}

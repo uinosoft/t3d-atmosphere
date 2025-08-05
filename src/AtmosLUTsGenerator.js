@@ -159,6 +159,17 @@ export class AtmosLUTsGenerator {
 		this._irradiancePass.render(renderer);
 	}
 
+	readIrradiancePixels(renderer) {
+		const { width, height, texture } = this._irradianceRT;
+		const imageData =
+			texture.type === PIXEL_TYPE.HALF_FLOAT
+				? new Uint16Array(width * height * 4)
+				: new Float32Array(width * height * 4);
+		renderer.setRenderTarget(this._irradianceRT);
+		renderer.readRenderTargetPixels(0, 0, width, height, imageData);
+		texture.userData.imageData = imageData;
+	}
+
 	setBetaRayleighDensity(wavelengths, skyTint, atmosphereThickness) {
 		// Sky Tint shifts the value of Wavelengths
 		const variableRangeWavelengths = _vec3_1.set(
