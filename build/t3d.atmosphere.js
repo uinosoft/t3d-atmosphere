@@ -1484,16 +1484,11 @@ vec3 ComputeIndirectIrradiance(float r, float mu_s) {
 			renderer.clear(true, true, true);
 			this._irradiancePass.render(renderer);
 		}
+		readTransmittancePixels(renderer) {
+			readPixels(renderer, this._transmittanceRT);
+		}
 		readIrradiancePixels(renderer) {
-			const {
-				width,
-				height,
-				texture
-			} = this._irradianceRT;
-			const imageData = texture.type === t3d.PIXEL_TYPE.HALF_FLOAT ? new Uint16Array(width * height * 4) : new Float32Array(width * height * 4);
-			renderer.setRenderTarget(this._irradianceRT);
-			renderer.readRenderTargetPixels(0, 0, width, height, imageData);
-			texture.userData.imageData = imageData;
+			readPixels(renderer, this._irradianceRT);
 		}
 		setBetaRayleighDensity(wavelengths, skyTint, atmosphereThickness) {
 			// Sky Tint shifts the value of Wavelengths
@@ -1539,6 +1534,17 @@ vec3 ComputeIndirectIrradiance(float r, float mu_s) {
 	}
 	const _vec3_1 = new t3d.Vector3();
 	const _vec3_2 = new t3d.Vector3();
+	function readPixels(renderer, renderTarget) {
+		const {
+			width,
+			height,
+			texture
+		} = renderTarget;
+		const imageData = texture.type === t3d.PIXEL_TYPE.HALF_FLOAT ? new Uint16Array(width * height * 4) : new Float32Array(width * height * 4);
+		renderer.setRenderTarget(renderTarget);
+		renderer.readRenderTargetPixels(0, 0, width, height, imageData);
+		texture.userData.imageData = imageData;
+	}
 
 	class AtmosLUTsLoader {
 		constructor(capabilities, options = {}) {

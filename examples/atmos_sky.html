@@ -114,17 +114,7 @@
 
 				// get transmittance pixels for sun light color calculation
 				console.time('read transmittance pixels');
-				const transmittanceRT = atmosLUTsGenerator._transmittanceRT;
-				const { width, height } = transmittanceRT;
-				const data = transmittanceRT.texture.type === t3d.PIXEL_TYPE.FLOAT ?
-					new Float32Array(width * height * 4) :
-					new Uint16Array(width * height * 4);
-				forwardRenderer.setRenderTarget(transmittanceRT);
-				forwardRenderer.readRenderTargetPixels(
-					0, 0, width, height,
-					data
-				);
-				transmittanceRT.texture.image.data = data;
+				atmosLUTsGenerator.readTransmittancePixels(forwardRenderer);
 				console.timeEnd('read transmittance pixels');
 
 				return atmosLUTsGenerator.data;
