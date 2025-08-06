@@ -1,4 +1,5 @@
 import { FileLoader, PIXEL_FORMAT, PIXEL_TYPE, Texture2D, Texture3D, TEXTURE_FILTER, MathUtils } from 't3d';
+import { AtmosParameters } from './AtmosParameters.js';
 
 export class AtmosLUTsLoader {
 
@@ -10,11 +11,9 @@ export class AtmosLUTsLoader {
 			transmittanceTexture: null,
 			inscatterTexture: null,
 			irradianceTexture: null,
-			betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
+			atmosphere: AtmosParameters.DEFAULT,
 			transmittanceMapping: 2,
-			inscatterMapping: 1,
-			use3DInscatterTexture: true,
-			altitudeLayers: 4
+			inscatterMapping: 1
 		};
 
 		let type = PIXEL_TYPE.FLOAT;

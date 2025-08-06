@@ -1,5 +1,4 @@
 import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { PrecomputeCommon } from './chunks/PrecomputeCommon.js';
 import { InscatterCompute } from './chunks/InscatterCompute.js';
 import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
 
@@ -8,7 +7,6 @@ export const InscatterShader = {
 	defines: {},
 	uniforms: {
 		transmittanceTexture: null,
-		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 		layer: 0
 	},
 	vertexShader: /* glsl */`
@@ -26,14 +24,11 @@ export const InscatterShader = {
         }
     `,
 	fragmentShader: /* glsl */`
-		${PrecomputeCommon}
         ${AtmosphereCommon}
 
 		uniform sampler2D transmittanceTexture;
 
-		#ifdef INSCATTER_3D
-			uniform float layer;
-		#endif
+		uniform float layer;
 
         varying vec2 v_Uv;
 
@@ -44,29 +39,18 @@ export const InscatterShader = {
 			vec2 uv = v_Uv;
 
 			const vec4 SCATTERING_TEXTURE_SIZE = vec4(
-				RES_NU - 1.,
-				RES_MU_S,
-				RES_MU,
-				RES_R_TOTAL
+				SCATTERING_TEXTURE_NU_SIZE - 1,
+				SCATTERING_TEXTURE_MU_S_SIZE,
+				SCATTERING_TEXTURE_MU_SIZE,
+				SCATTERING_TEXTURE_R_SIZE
 			);
 
-			float fragCoordNu = floor(gl_FragCoord.x / RES_MU_S);
-			float fragCoordMuS = mod(gl_FragCoord.x, RES_MU_S);
+			float fragCoordNu = floor(gl_FragCoord.x / float(SCATTERING_TEXTURE_MU_S_SIZE));
+			float fragCoordMuS = mod(gl_FragCoord.x, float(SCATTERING_TEXTURE_MU_S_SIZE));
 
-			#ifdef INSCATTER_3D
-				float fragCoordY = gl_FragCoord.y;
-			#else
-				#if ALTITUDE_LAYERS > 1
-					float layerIndex = floor(gl_FragCoord.y / RES_MU);
-					float layer = pow(2., layerIndex) - 1.0;
-					float fragCoordY = mod(gl_FragCoord.y, RES_MU);
-				#else
-					float layer = 1.0;
-					float fragCoordY = gl_FragCoord.y;
-				#endif
-			#endif
+			float fragCoordY = gl_FragCoord.y;
 
-			float fragCoordZ = GetTextureCoordFromUnitRange(layer, RES_R_TOTAL);
+			float fragCoordZ = GetTextureCoordFromUnitRange(layer, SCATTERING_TEXTURE_R_SIZE);
 
 			vec4 uvwz = vec4(fragCoordNu, fragCoordMuS, fragCoordY, fragCoordZ) / SCATTERING_TEXTURE_SIZE;
 			

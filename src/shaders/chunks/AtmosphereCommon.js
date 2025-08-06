@@ -1,28 +1,55 @@
+import {
+	IRRADIANCE_TEXTURE_WIDTH,
+	IRRADIANCE_TEXTURE_HEIGHT,
+	SCATTERING_TEXTURE_R_SIZE,
+	SCATTERING_TEXTURE_MU_SIZE,
+	SCATTERING_TEXTURE_MU_S_SIZE,
+	SCATTERING_TEXTURE_NU_SIZE,
+	TRANSMITTANCE_TEXTURE_WIDTH,
+	TRANSMITTANCE_TEXTURE_HEIGHT,
+	METER_TO_LENGTH_UNIT
+} from '../../constants.js';
+
 export const AtmosphereCommon = /* glsl */`
-uniform vec4 betaR;
+struct AtmosphereParameters {
+	vec3 solar_irradiance;
+	float bottom_radius;
+  	float top_radius;
+	vec3 rayleigh_scattering;
+	vec3 mie_scattering;
+	vec3 mie_extinction;
+	float mie_phase_function_g;
+	vec3 absorption_extinction;
+	vec3 ground_albedo;
+};
 
-const float RES_R_TOTAL = 32.; // all altitude layer
-const float RES_MU = 128.; 	// height of the texture
-const float RES_MU_S = 32.; // width per table
-const float RES_NU = 8.;	// table per texture depth
+uniform AtmosphereParameters atmosphere;
 
-const vec2 TRANSMISSION_SIZE = vec2(256., 64.); // 256x64
+#define IRRADIANCE_TEXTURE_WIDTH ${IRRADIANCE_TEXTURE_WIDTH.toFixed(0)}
+#define IRRADIANCE_TEXTURE_HEIGHT ${IRRADIANCE_TEXTURE_HEIGHT.toFixed(0)}
+#define SCATTERING_TEXTURE_R_SIZE ${SCATTERING_TEXTURE_R_SIZE.toFixed(0)}
+#define SCATTERING_TEXTURE_MU_SIZE ${SCATTERING_TEXTURE_MU_SIZE.toFixed(0)}
+#define SCATTERING_TEXTURE_MU_S_SIZE ${SCATTERING_TEXTURE_MU_S_SIZE.toFixed(0)}
+#define SCATTERING_TEXTURE_NU_SIZE ${SCATTERING_TEXTURE_NU_SIZE.toFixed(0)}
+#define TRANSMITTANCE_TEXTURE_WIDTH ${TRANSMITTANCE_TEXTURE_WIDTH.toFixed(0)}
+#define TRANSMITTANCE_TEXTURE_HEIGHT ${TRANSMITTANCE_TEXTURE_HEIGHT.toFixed(0)}
+#define METER_TO_LENGTH_UNIT ${METER_TO_LENGTH_UNIT.toFixed(7)}
 
-const float IRRADIANCE_TEXTURE_WIDTH = 64.;
-const float IRRADIANCE_TEXTURE_HEIGHT = 16.;
-
-const vec3 solar_irradiance = vec3(1.474, 1.8504, 1.91198);
+// Half heights for the atmosphere air density (HR) and particle density (HM)
+// This is the height in km that half the particles are found below
+const float HR = 8.0;
+const float HM = 1.2;
 
 // ---------------------------------------------------------------------------- 
 // UTILITY FUNCTIONS
 // ---------------------------------------------------------------------------- 
 
-float GetTextureCoordFromUnitRange(float x, float textureSize) {
-	return 0.5 / textureSize + x * (1.0 - 1.0 / textureSize);
+float GetTextureCoordFromUnitRange(const float x, const int texture_size) {
+	return 0.5 / float(texture_size) + x * (1.0 - 1.0 / float(texture_size));
 }
 
-float GetUnitRangeFromTextureCoord(float u, float textureSize) {
-	return (u - 0.5 / textureSize) / (1.0 - 1.0 / textureSize);
+float GetUnitRangeFromTextureCoord(const float u, const int texture_size) {
+	return (u - 0.5 / float(texture_size)) / (1.0 - 1.0 / float(texture_size));
 }
 
 float ClampCosine(float mu) {
@@ -34,7 +61,7 @@ float ClampDistance(float d) {
 }
 
 float ClampRadius(float r) {
-	return clamp(r, Rg, Rt);
+	return clamp(r, atmosphere.bottom_radius, atmosphere.top_radius);
 }
 
 float SafeSqrt(float a) {
@@ -42,12 +69,12 @@ float SafeSqrt(float a) {
 }
 
 float DistanceToTopAtmosphereBoundary(float r, float mu) {
-	float discriminant = r * r * (mu * mu - 1.0) + Rt * Rt;
+	float discriminant = r * r * (mu * mu - 1.0) + atmosphere.top_radius * atmosphere.top_radius;
 	return ClampDistance(-r * mu + SafeSqrt(discriminant));
 }
 
 float DistanceToBottomAtmosphereBoundary(float r, float mu) {
-	float discriminant = r * r * (mu * mu - 1.0) + Rg * Rg;
+	float discriminant = r * r * (mu * mu - 1.0) + atmosphere.bottom_radius * atmosphere.bottom_radius;
 	return ClampDistance(-r * mu - SafeSqrt(discriminant));
 }
 

@@ -1,12 +1,9 @@
 import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { PrecomputeCommon } from './chunks/PrecomputeCommon.js';
 import { TransmittanceCompute } from './chunks/TransmittanceCompute.js';
 
 export const TransmittanceShader = {
 	name: 'atmos_transmittance',
-	uniforms: {
-		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1]
-	},
+	uniforms: {},
 	vertexShader: /* glsl */`
         attribute vec3 a_Position;
         attribute vec2 a_Uv;
@@ -24,7 +21,6 @@ export const TransmittanceShader = {
 	fragmentShader: /* glsl */`
         varying vec2 v_Uv;
 
-		${PrecomputeCommon}
         ${AtmosphereCommon}
 		${TransmittanceCompute}
 

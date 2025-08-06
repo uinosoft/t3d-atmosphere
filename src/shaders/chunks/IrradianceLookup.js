@@ -1,6 +1,6 @@
 export const IrradianceLookup = /* glsl */ `
 vec2 GetIrradianceUvFromRMuS(float r, float mu_s) {
-	float x_r = (r - Rg) / (Rt - Rg);
+	float x_r = (r - atmosphere.bottom_radius) / (atmosphere.top_radius - atmosphere.bottom_radius);
 	float x_mu_s = mu_s * 0.5 + 0.5;
 	return vec2(
 		GetTextureCoordFromUnitRange(x_mu_s, IRRADIANCE_TEXTURE_WIDTH),

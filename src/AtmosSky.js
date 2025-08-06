@@ -1,4 +1,4 @@
-import { Mesh, ShaderMaterial, DRAW_SIDE, SphereGeometry } from 't3d';
+import { Mesh, ShaderMaterial, DRAW_SIDE, PlaneGeometry } from 't3d';
 import { AtmosSkyShader } from './shaders/AtmosSkyShader.js';
 
 export class AtmosSky extends Mesh {
@@ -9,7 +9,7 @@ export class AtmosSky extends Mesh {
 		material.side = DRAW_SIDE.BACK;
 		material.dithering = true;
 
-		super(new SphereGeometry(1, 100, 100), material);
+		super(new PlaneGeometry(2, 2), material);
 
 		this.frustumCulled = false;
 	}
@@ -22,7 +22,7 @@ export class AtmosSky extends Mesh {
 		uniforms.inscatteringTexture = inscatterTexture;
 		uniforms.irradianceTexture = irradianceTexture;
 
-		uniforms.betaR = lutsData.betaR;
+		uniforms.atmosphere = lutsData.atmosphere.toUniform();
 
 		let needsUpdate = false;
 
@@ -33,16 +33,6 @@ export class AtmosSky extends Mesh {
 
 		if (defines.INSCATTER_MAPPING !== lutsData.inscatterMapping) {
 			defines.INSCATTER_MAPPING = lutsData.inscatterMapping;
-			needsUpdate = true;
-		}
-
-		if (defines.INSCATTER_3D !== lutsData.use3DInscatterTexture) {
-			defines.INSCATTER_3D = lutsData.use3DInscatterTexture;
-			needsUpdate = true;
-		}
-
-		if (defines.ALTITUDE_LAYERS !== lutsData.altitudeLayers) {
-			defines.ALTITUDE_LAYERS = lutsData.altitudeLayers;
 			needsUpdate = true;
 		}
 

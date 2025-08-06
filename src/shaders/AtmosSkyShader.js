@@ -3,16 +3,14 @@ import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
 import { InscatterLookup } from './chunks/InscatterLookup.js';
 import { IrradianceLookup } from './chunks/IrradianceLookup.js';
 import { ToneMapping } from './chunks/ToneMapping.js';
+import { METER_TO_LENGTH_UNIT } from '../constants.js';
 
 export const AtmosSkyShader = {
 	name: 'atmos_sky',
 	defines: {
 		TRANSMITTANCE_MAPPING: 1,
 		INSCATTER_MAPPING: 1,
-		INSCATTER_3D: false,
-		ALTITUDE_LAYERS: 4,
 
-		BACKGROUND: false,
 		TONE_MAPPING: 5,
 		SRGB_OUTPUT: true,
 
@@ -24,16 +22,11 @@ export const AtmosSkyShader = {
 		inscatteringTexture: null,
 		transmittanceTexture: null,
 		irradianceTexture: null,
-		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 
-		// Camera position in atmosphere coordinates, where the center of the Earth is at (0, 0, 0) and the radius is Rg.
+		// Camera position in atmosphere coordinates, where the center of the Earth is at (0, 0, 0) and the radius is atmosphere.bottom_radius.
 		// If the external world coordinate system is not consistent with the atmosphere coordinate system
 		// (for example, in the case of the Earth being an ellipsoid), coordinate transformation is required.
 		cameraPosition: [0, 0, 0],
-
-		u_mie_phase_function_g: 0.8,
-
-		u_ground_albedo: [0.15, 0.15, 0.15],
 
 		toneMappingExposure: 10.0,
 
@@ -41,6 +34,7 @@ export const AtmosSkyShader = {
 	},
 	vertexShader: /* glsl */`
         #define PI 3.14159265359
+		#define METER_TO_LENGTH_UNIT ${METER_TO_LENGTH_UNIT.toFixed(7)}
 
         attribute vec3 a_Position;
 
@@ -52,53 +46,63 @@ export const AtmosSkyShader = {
 
         uniform vec4 sunDirSize;
 
-        varying vec3 vWorldPos;
+		varying vec3 vCameraPosition;
+		varying vec3 vRayDirection;
 
-		mat4 clearMat4Translate(mat4 m) {
-			mat4 outMatrix = m;
-			outMatrix[3].xyz = vec3(0., 0., 0.);
-			return outMatrix;
+		void getCameraRay(out vec3 origin, out vec3 direction) {
+			mat4 inverseProjectionMatrix = inverse(u_Projection);
+			mat4 inverseViewMatrix = inverse(u_Model * u_View); // pre-multiplied by model matrix in case use anchorMatrix
+
+			bool isPerspective = inverseProjectionMatrix[2][3] != 0.0; // 4th entry in the 3rd column
+
+			if (isPerspective) {
+				// Calculate the camera ray for a perspective camera.
+				vec4 viewPosition = inverseProjectionMatrix * vec4(a_Position.xzy, 1.0);
+				vec4 worldDirection = inverseViewMatrix * vec4(viewPosition.xyz, 0.0);
+				origin = cameraPosition;
+				direction = worldDirection.xyz;
+			} else {
+				// Unprojected points to calculate direction.
+				vec4 nearPoint = inverseProjectionMatrix * vec4(a_Position.xz, -1.0, 1.0);
+				vec4 farPoint = inverseProjectionMatrix * vec4(a_Position.xz, -0.9, 1.0);
+				nearPoint /= nearPoint.w;
+				farPoint /= farPoint.w;
+
+				// Calculate world values
+				vec4 worldDirection = inverseViewMatrix * vec4(farPoint.xyz - nearPoint.xyz, 0.0);
+				vec4 worldOrigin = inverseViewMatrix * nearPoint;
+
+				// Outputs
+				direction = worldDirection.xyz;
+				origin = worldOrigin.xyz;
+			}
 		}
         
         void main() {
-			mat4 modelMatrix = clearMat4Translate(u_Model);
-			mat4 viewMatrix = clearMat4Translate(u_View);
+			vec3 direction, origin;
+  			getCameraRay(origin, direction);
 
-			#ifdef BACKGROUND
-				vWorldPos.xyz = (modelMatrix * vec4(a_Position, 0.0)).xyz;
-			#else
-				vWorldPos.xyz = a_Position;
-			#endif
+			vCameraPosition = origin * METER_TO_LENGTH_UNIT;
+			vRayDirection = direction;
 
-			gl_Position = u_Projection * viewMatrix * modelMatrix * vec4(a_Position, 1.0);
-			gl_Position.z = gl_Position.w;
+			gl_Position = vec4(a_Position.xz, 1.0, 1.0);
         }
     `,
 	fragmentShader: /* glsl */`
         uniform vec4 sunDirSize;
 
-		#ifdef INSCATTER_3D
-			 uniform highp sampler3D inscatteringTexture;
-		#else
-			 uniform sampler2D inscatteringTexture;
-		#endif
+		uniform highp sampler3D inscatteringTexture;
        
         uniform sampler2D transmittanceTexture;
 
 		uniform sampler2D irradianceTexture;
 
-		uniform float u_mie_phase_function_g;
-		uniform vec3 u_ground_albedo;
-
         uniform float toneMappingExposure;
 
 		uniform vec3 cameraPosition;
 
-        varying vec3 vWorldPos;
-
-        const float Rg = 6360000.0;
-        const float Rt = 6420000.0;
-        const float RL = 6421000.0;
+		varying vec3 vCameraPosition;
+		varying vec3 vRayDirection;
 
 		${AtmosphereCommon}
 		${TransmittanceLookup}
@@ -106,13 +110,13 @@ export const AtmosSkyShader = {
 		${IrradianceLookup}
 
 		bool RayIntersectsGround(float r, float mu) {
-			return mu < 0.0 && r * r * (mu * mu - 1.0) + Rg * Rg >= 0.0;
+			return mu < 0.0 && r * r * (mu * mu - 1.0) + atmosphere.bottom_radius * atmosphere.bottom_radius >= 0.0;
 		}
 
 		bool RayIntersectsGround(vec3 camera, vec3 view_ray) {
 			float r = length(camera);
 			float mu = dot(camera, view_ray) / r;
-			return mu < 0.0 && r * r * (mu * mu - 1.0) + Rg * Rg >= 0.0;
+			return mu < 0.0 && r * r * (mu * mu - 1.0) + atmosphere.bottom_radius * atmosphere.bottom_radius >= 0.0;
 		}
 
 		float RaySphereFirstIntersection(vec3 origin, vec3 direction, vec3 center, float radius) {
@@ -133,13 +137,13 @@ export const AtmosSkyShader = {
             float r = length(camera);
             float rmu = dot(camera, view_ray);
 
-            float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + Rt * Rt);
+            float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
             
             if (distance_to_top_atmosphere_boundary > 0.0) {
                 camera = camera + view_ray * distance_to_top_atmosphere_boundary;
-				r = Rt;
+				r = atmosphere.top_radius;
                 rmu += distance_to_top_atmosphere_boundary;
-            } else if (r > Rt) {
+            } else if (r > atmosphere.top_radius) {
 			 	transmittance = vec3(1.0);
 				return vec3(0.0);
 			}
@@ -158,7 +162,7 @@ export const AtmosSkyShader = {
 			vec3 scattering = GetCombinedScattering(r, mu, mu_s, nu, ray_r_mu_intersects_ground, single_mie_scattering);
 
             return scattering * RayleighPhaseFunction(nu) +
-				single_mie_scattering * MiePhaseFunction(u_mie_phase_function_g, nu);
+				single_mie_scattering * MiePhaseFunction(atmosphere.mie_phase_function_g, nu);
         }
 
 		vec3 GetSkyRadianceToPoint(vec3 camera, vec3 point, vec3 sun_direction, out vec3 transmittance) {
@@ -166,13 +170,13 @@ export const AtmosSkyShader = {
 			float r = length(camera);
 			float rmu = dot(camera, view_ray);
 
-			float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + Rt * Rt);
+			float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
 
 			// If the viewer is in space and the view ray intersects the atmosphere, move
 			// the viewer to the top atmosphere boundary (along the view ray):
 			if (distance_to_top_atmosphere_boundary > 0.0) {
 				camera = camera + view_ray * distance_to_top_atmosphere_boundary;
-				r = Rt;
+				r = atmosphere.top_radius;
 				rmu += distance_to_top_atmosphere_boundary;
 			}
 
@@ -188,7 +192,7 @@ export const AtmosSkyShader = {
 			// atmosphere texture resolution and finite floating point precision.
 			// See: https://github.com/ebruneton/precomputed_atmospheric_scattering/pull/32
 			if (!ray_r_mu_intersects_ground) {
-				float mu_horiz = -SafeSqrt(1.0 - Rg / r * (Rg / r));
+				float mu_horiz = -SafeSqrt(1.0 - atmosphere.bottom_radius / r * (atmosphere.bottom_radius / r));
 				mu = max(mu, mu_horiz + 0.004);
 			}
 
@@ -215,7 +219,7 @@ export const AtmosSkyShader = {
 			single_mie_scattering = single_mie_scattering * smoothstep(float(0.0), float(0.01), mu_s);
 
 			return scattering * RayleighPhaseFunction(nu) + 
-				single_mie_scattering * MiePhaseFunction(u_mie_phase_function_g, nu);
+				single_mie_scattering * MiePhaseFunction(atmosphere.mie_phase_function_g, nu);
 		}
 
 		vec3 GetSunAndSkyIrradiance(vec3 point, vec3 normal, vec3 sun_direction, out vec3 sky_irradiance) {
@@ -226,7 +230,7 @@ export const AtmosSkyShader = {
 			sky_irradiance = GetIrradiance(r, mu_s) * (1.0 + dot(normal, point) / r) * 0.5;
 
 			// Direct irradiance.
-			return solar_irradiance *
+			return atmosphere.solar_irradiance *
 				GetTransmittanceToSun(r, mu_s) *
 				max(dot(normal, sun_direction), 0.0);
 		}
@@ -236,8 +240,8 @@ export const AtmosSkyShader = {
 		#include <dithering_pars_frag>
 
         void main() {
-			vec3 camera = cameraPosition;
-            vec3 view_ray = normalize(vWorldPos.xyz);
+			vec3 camera = vCameraPosition;
+            vec3 view_ray = normalize(vRayDirection);
             float nu = dot(view_ray, sunDirSize.xyz);
 
 			vec3 col = vec3(0.0);
@@ -246,7 +250,7 @@ export const AtmosSkyShader = {
 			#ifdef GROUND_ALBEDO
 				bool ray_r_mu_intersects_ground = RayIntersectsGround(camera, view_ray);
 				if (ray_r_mu_intersects_ground) {
-					float distance_to_ground = RaySphereFirstIntersection(camera, view_ray, Rg);
+					float distance_to_ground = RaySphereFirstIntersection(camera, view_ray, atmosphere.bottom_radius);
 					vec3 ground_point = view_ray * distance_to_ground + camera;
 					vec3 surface_normal = normalize(ground_point);
 
@@ -260,12 +264,12 @@ export const AtmosSkyShader = {
 
 					vec3 inscatter = GetSkyRadianceToPoint(
 						camera,
-						surface_normal * (Rg + 1.0),
+						surface_normal * (atmosphere.bottom_radius + 1.0),
 						sunDirSize.xyz,
 						transmittance
 					);
 
-					vec3 radiance = u_ground_albedo * RECIPROCAL_PI * (sunIrradiance + skyIrradiance);
+					vec3 radiance = atmosphere.ground_albedo * RECIPROCAL_PI * (sunIrradiance + skyIrradiance);
 					col = transmittance * radiance + inscatter;
 
 					transmittance = vec3(0.0);

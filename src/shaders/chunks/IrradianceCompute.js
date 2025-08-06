@@ -2,7 +2,7 @@ export const IrradianceCompute = /* glsl */`
 void GetRMuSFromIrradianceUv(vec2 uv, out float r, out float mu_s) {
   float x_mu_s = GetUnitRangeFromTextureCoord(uv.x, IRRADIANCE_TEXTURE_WIDTH);
   float x_r = GetUnitRangeFromTextureCoord(uv.y, IRRADIANCE_TEXTURE_HEIGHT);
-  r = Rg + x_r * (Rt - Rg);
+  r = atmosphere.bottom_radius + x_r * (atmosphere.top_radius - atmosphere.bottom_radius);
   mu_s = ClampCosine(2.0 * x_mu_s - 1.0);
 }
 
@@ -16,7 +16,7 @@ vec3 ComputeDirectIrradiance(float r, float mu_s) {
 		mu_s < -alpha_s ? 0.0 : (mu_s > alpha_s ? mu_s :
 		(mu_s + alpha_s) * (mu_s + alpha_s) / (4.0 * alpha_s));
 
-	return solar_irradiance *
+	return atmosphere.solar_irradiance *
 		GetTransmittanceToTopAtmosphereBoundary(r, mu_s) * average_cosine_factor;
 }
 

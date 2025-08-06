@@ -32,7 +32,7 @@
 		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { DRACOLoader } from 't3d/addons/loaders/DRACOLoader.js';
 		import { TilesRenderer, CesiumIonAuthPlugin, ReorientationPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosSkyLight, AtmosUtils } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, getAltitudeCorrectionOffset, getSkyLightSH } from 't3d-atmosphere';
 		import ionAccessToken from './ionAccessToken.js';
 		import { Pane } from 'tweakpane';
 
@@ -115,28 +115,20 @@
 
 		const precomputeOptions = {
 			source: 'loader',
-			transmittanceMapping: 2,
-			use3DInscatterTexture: true,
-			altitudeLayers: 4
+			transmittanceMapping: 2
 		};
 
-		let atmosLUTsGenerator, atmosLUTsLoader, skyLight;
+		let atmosLUTsGenerator, atmosLUTsLoader, atmosLUTsData;
 
 		async function getLUTsData() {
-			if (skyLight) {
-				scene.remove(skyLight);
-				skyLight = null;
-			}
-		
+			atmosLUTsData = null;
+
 			if (atmosLUTsGenerator) {
 				atmosLUTsGenerator.dispose();
 			}
 
-			let resultData;
-
 			if (precomputeOptions.source === 'generator') {
 				atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
-				// atmosLUTsGenerator.setBetaRayleighDensity(new t3d.Vector3(680, 550, 440), new t3d.Color3(128 / 255, 128 / 255, 128 / 255, 255 / 255), 1.0);
 
 				console.time('compute transmittance');
 				atmosLUTsGenerator.computeTransmittance(forwardRenderer);
@@ -167,7 +159,7 @@
 
 				atmosLUTsGenerator.readIrradiancePixels(forwardRenderer);
 
-				resultData = atmosLUTsGenerator.data;
+				atmosLUTsData = atmosLUTsGenerator.data;
 			} else {
 				if (!atmosLUTsLoader) {
 					atmosLUTsLoader = new AtmosLUTsLoader(forwardRenderer.capabilities);
@@ -185,20 +177,10 @@
 					console.timeEnd('load irradiance');
 				}
 
-				resultData = atmosLUTsLoader.data;
+				atmosLUTsData = atmosLUTsLoader.data;
 			}
 
-			skyLight = createSkyLight(resultData);
-			scene.add(skyLight);
-
-			return resultData;
-		}
-
-		function createSkyLight(luts) {
-			return new AtmosSkyLight({
-				irradianceTexture: luts.irradianceTexture,
-				ellipsoid: tiles.ellipsoid
-			});
+			return atmosLUTsData;
 		}
 
 		// sky and sun
@@ -207,9 +189,11 @@
 		scene.add(sky);
 
 		const skyMaterial = sky.material;
-		skyMaterial.defines.BACKGROUND = false;
 
-		const directionalLight = new t3d.DirectionalLight(0xffffff, 2.0);
+		const skyLight = new t3d.SphericalHarmonicsLight();
+		scene.add(skyLight);
+
+		const directionalLight = new t3d.DirectionalLight(0xffffff, 1.8);
 		directionalLight.position.set(-10, 20, 30);
 		directionalLight.castShadow = true;
 		directionalLight.shadow.windowSize = 3;
@@ -271,25 +255,6 @@
 				'Mapping-2017': 2
 			}
 		});
-		precomputeFolder.addBinding(precomputeOptions, 'use3DInscatterTexture', {
-			label: '3D Inscatter'
-		});
-		precomputeFolder.addBinding(precomputeOptions, 'altitudeLayers', {
-			label: 'Altitude Layers',
-			options: { '1': 1, '4': 4 }
-		});
-
-		const miePhaseFolder = pane.addFolder({
-			title: 'Mie Phase',
-			expanded: false
-		});
-		
-		miePhaseFolder.addBinding(skyMaterial.uniforms, 'u_mie_phase_function_g', {
-			min: 0,
-			max: 1,
-			step: 0.01,
-			label: 'Function G'
-		});
 
 		const groundFolder = pane.addFolder({
 			title: 'Ground',
@@ -299,14 +264,6 @@
 			label: 'enable'
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
-		});
-		const groundAlbedoColor = new t3d.Color3().fromArray(skyMaterial.uniforms.u_ground_albedo).convertLinearToSRGB();
-		const groundAlbedoColorSRGB = new t3d.Color3();
-		groundFolder.addBinding({ groundAlbedoColor }, 'groundAlbedoColor', {
-			color: { type: 'float' },
-			label: 'albedo'
-		}).on('change', () => {
-			groundAlbedoColorSRGB.copy(groundAlbedoColor).convertSRGBToLinear().toArray(skyMaterial.uniforms.u_ground_albedo);
 		});
 
 		const sunFolder = pane.addFolder({
@@ -374,7 +331,8 @@
 		//
 
 		const _cameraPosition = new t3d.Vector3();
-		const altitudeCorrectionOffset = new t3d.Vector3();
+		const _sunDirection = new t3d.Vector3();
+		const _altitudeCorrectionOffset = new t3d.Vector3();
 
 		function loop(count) {
 			requestAnimationFrame(loop);
@@ -387,12 +345,13 @@
 		
 			tiles.update();
 		
-			AtmosUtils.getAltitudeCorrectionOffset(camera.position, 6360000, tiles.ellipsoid, altitudeCorrectionOffset);
-			_cameraPosition.addVectors(camera.position, altitudeCorrectionOffset).toArray(skyMaterial.uniforms.cameraPosition);
+			getAltitudeCorrectionOffset(camera.position, 6360000, tiles.ellipsoid, _altitudeCorrectionOffset);
+			_cameraPosition.addVectors(camera.position, _altitudeCorrectionOffset).toArray(skyMaterial.uniforms.cameraPosition);
 
-			if (skyLight) {
-				skyLight.sunDirection.fromArray(skyMaterial.uniforms['sunDirSize']);
-				skyLight.update(_cameraPosition.normalize().multiplyScalar(6360000 + 1));
+			if (atmosLUTsData) {
+				_sunDirection.fromArray(skyMaterial.uniforms['sunDirSize']);
+				_cameraPosition.normalize().multiplyScalar(6360000 + 1);
+				getSkyLightSH(atmosLUTsData.irradianceTexture, _cameraPosition, _sunDirection, skyLight.sh, tiles.ellipsoid);
 			}
 
 			forwardRenderer.render(scene, camera);

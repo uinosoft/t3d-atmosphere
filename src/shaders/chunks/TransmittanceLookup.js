@@ -3,27 +3,27 @@ export const TransmittanceLookup = /* glsl */`
 #if TRANSMITTANCE_MAPPING == 0
 	vec2 GetTransmittanceUvFromRMu(float r, float mu) {
 		float u = (mu + 0.15) / (1.0 + 0.15);
-		float v = (r - Rg) / (Rt - Rg);
+		float v = (r - atmosphere.bottom_radius) / (atmosphere.top_radius - atmosphere.bottom_radius);
 		return vec2(u, v);
 	}
 #elif TRANSMITTANCE_MAPPING == 1
 	vec2 GetTransmittanceUvFromRMu(float r, float mu) {
 		float u = atan((mu + 0.15) / (1.0 + 0.15) * tan(1.5)) / 1.5;
-		float v = sqrt((r - Rg) / (Rt - Rg));
+		float v = sqrt((r - atmosphere.bottom_radius) / (atmosphere.top_radius - atmosphere.bottom_radius));
 		return vec2(u, v);
 	}
 #else
 	vec2 GetTransmittanceUvFromRMu(float r, float mu) {
-		float H = sqrt(Rt * Rt - Rg * Rg);
-		float rho = SafeSqrt(r * r - Rg * Rg);
+		float H = sqrt(atmosphere.top_radius * atmosphere.top_radius - atmosphere.bottom_radius * atmosphere.bottom_radius);
+		float rho = SafeSqrt(r * r - atmosphere.bottom_radius * atmosphere.bottom_radius);
 		float d = DistanceToTopAtmosphereBoundary(r, mu);
-		float d_min = Rt - r;
+		float d_min = atmosphere.top_radius - r;
 		float d_max = rho + H;
 		float x_mu = (d - d_min) / (d_max - d_min);
 		float x_r = rho / H;
 		return vec2(
-			GetTextureCoordFromUnitRange(x_mu, TRANSMISSION_SIZE.x),
-			GetTextureCoordFromUnitRange(x_r, TRANSMISSION_SIZE.y)
+			GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH),
+			GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT)
 		);
 	}
 #endif
@@ -36,7 +36,7 @@ vec3 GetTransmittanceToTopAtmosphereBoundary(float r, float mu) {
 }
 
 vec3 GetTransmittanceToSun(float r, float mu) {
-	float sin_theta_h = Rg / r;
+	float sin_theta_h = atmosphere.bottom_radius / r;
 	float cos_theta_h = -sqrt(max(1.0 - sin_theta_h * sin_theta_h, 0.0));
 	return GetTransmittanceToTopAtmosphereBoundary(r, mu) *
 		smoothstep(-sin_theta_h * 0.004674, sin_theta_h * 0.004674, mu - cos_theta_h);

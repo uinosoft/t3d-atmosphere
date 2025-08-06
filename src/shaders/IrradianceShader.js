@@ -1,5 +1,4 @@
 import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { PrecomputeCommon } from './chunks/PrecomputeCommon.js';
 import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
 import { InscatterLookup } from './chunks/InscatterLookup.js';
 import { IrradianceCompute } from './chunks/IrradianceCompute.js';
@@ -9,7 +8,6 @@ export const IrradianceShader = {
 	uniforms: {
 		transmittanceTexture: null,
 		inscatteringTexture: null,
-		betaR: [5.8e-3, 1.35e-2, 3.31e-2, 1],
 		miePhaseFunctionG: 0.8
 	},
 	vertexShader: /* glsl */`
@@ -29,16 +27,11 @@ export const IrradianceShader = {
 	fragmentShader: /* glsl */`
         varying vec2 v_Uv;
 
-		${PrecomputeCommon}
         ${AtmosphereCommon}
 
 		uniform sampler2D transmittanceTexture;
 		
-		#ifdef INSCATTER_3D
-			uniform highp sampler3D inscatteringTexture;
-		#else
-			uniform sampler2D inscatteringTexture;
-		#endif
+		uniform highp sampler3D inscatteringTexture;
 
 		uniform float miePhaseFunctionG;
 

@@ -30,7 +30,7 @@
 		import * as t3d from 't3d';
 		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosUtils } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, getSunLightColor } from 't3d-atmosphere';
 		import { Pane } from 'tweakpane';
 
 		let width = window.innerWidth || 2;
@@ -84,9 +84,7 @@
 
 		const precomputeOptions = {
 			source: 'generator',
-			transmittanceMapping: 2,
-			use3DInscatterTexture: true,
-			altitudeLayers: 4
+			transmittanceMapping: 2
 		};
 
 		let atmosLUTsGenerator, atmosLUTsLoader;
@@ -98,7 +96,6 @@
 
 			if (precomputeOptions.source === 'generator') {
 				atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
-				// atmosLUTsGenerator.setBetaRayleighDensity(new t3d.Vector3(680, 550, 440), new t3d.Color3(128 / 255, 128 / 255, 128 / 255, 255 / 255), 1.0);
 
 				console.time('compute transmittance');
 				atmosLUTsGenerator.computeTransmittance(forwardRenderer);
@@ -145,7 +142,6 @@
 		scene.add(sky);
 
 		const skyMaterial = sky.material;
-		skyMaterial.defines.BACKGROUND = true;
 		skyMaterial.uniforms.cameraPosition = [0, 400 + 6360000, 0];
 
 		const directionalLight = new t3d.DirectionalLight(0xffffff, 0.6);
@@ -174,7 +170,7 @@
 		function setSunLightColor() {
 			vector3.fromArray(skyMaterial.uniforms['sunDirSize']);
 			cameraPosition.fromArray(skyMaterial.uniforms.cameraPosition);
-			AtmosUtils.getSunLightColor(skyMaterial.uniforms.transmittanceTexture, cameraPosition, vector3, directionalLight.color);
+			getSunLightColor(skyMaterial.uniforms.transmittanceTexture, cameraPosition, vector3, directionalLight.color);
 			directionalLight.color.convertLinearToSRGB();
 		}
 
@@ -217,19 +213,12 @@
 				'Mapping-2017': 2
 			}
 		});
-		precomputeFolder.addBinding(precomputeOptions, 'use3DInscatterTexture', {
-			label: '3D Inscatter'
-		});
-		precomputeFolder.addBinding(precomputeOptions, 'altitudeLayers', {
-			label: 'Altitude Layers',
-			options: { '1': 1, '4': 4 }
-		});
 
 		const altitudeFolder = pane.addFolder({
 			title: 'Altitude'
 		});
 		const altitudeParams = {
-			fixedAltitude: skyMaterial.defines.BACKGROUND,
+			fixedAltitude: true,
 			cameraHeight: skyMaterial.uniforms.cameraPosition[1] - 6360000
 		};
 		altitudeFolder.addBinding(altitudeParams, 'fixedAltitude', {
@@ -239,8 +228,6 @@
 				skyMaterial.uniforms.cameraPosition = [0, altitudeParams.cameraHeight + 6360000, 0];
 				setSunLightColor();
 			}
-			skyMaterial.defines.BACKGROUND = value;
-			skyMaterial.needsUpdate = true;
 			altitudeControl.disabled = !value;
 		});
 		const altitudeControl = altitudeFolder.addBinding(altitudeParams, 'cameraHeight', {
@@ -254,18 +241,6 @@
 			setSunLightColor();
 		});
 
-		const miePhaseFolder = pane.addFolder({
-			title: 'Mie Phase',
-			expanded: false
-		});
-		
-		miePhaseFolder.addBinding(skyMaterial.uniforms, 'u_mie_phase_function_g', {
-			min: 0,
-			max: 1,
-			step: 0.01,
-			label: 'Function G'
-		});
-
 		const groundFolder = pane.addFolder({
 			title: 'Ground',
 			expanded: false
@@ -274,14 +249,6 @@
 			label: 'enable'
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
-		});
-		const groundAlbedoColor = new t3d.Color3().fromArray(skyMaterial.uniforms.u_ground_albedo).convertLinearToSRGB();
-		const groundAlbedoColorSRGB = new t3d.Color3();
-		groundFolder.addBinding({ groundAlbedoColor }, 'groundAlbedoColor', {
-			color: { type: 'float' },
-			label: 'albedo'
-		}).on('change', () => {
-			groundAlbedoColorSRGB.copy(groundAlbedoColor).convertSRGBToLinear().toArray(skyMaterial.uniforms.u_ground_albedo);
 		});
 
 		const sunFolder = pane.addFolder({

@@ -1,5 +1,7 @@
 export { AtmosSky } from './AtmosSky.js';
-export { AtmosSkyLight } from './AtmosSkyLight.js';
 export { AtmosLUTsGenerator } from './AtmosLUTsGenerator.js';
 export { AtmosLUTsLoader } from './AtmosLUTsLoader.js';
-export * as AtmosUtils from './AtmosUtils.js';
+export { getAltitudeCorrectionOffset } from './getAltitudeCorrectionOffset.js';
+export { getScatteringCoefficient } from './getScatteringCoefficient.js';
+export { getSkyLightSH } from './getSkyLightSH.js';
+export { getSunLightColor } from './getSunLightColor.js';

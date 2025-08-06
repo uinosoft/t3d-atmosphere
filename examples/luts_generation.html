@@ -64,7 +64,6 @@
 			clear();
 
 			atmosLUTsGenerator = new AtmosLUTsGenerator(renderer.capabilities, precomputeOptions);
-			// atmosLUTsGenerator.setBetaRayleighDensity(new t3d.Vector3(680, 550, 440), new t3d.Color3(128 / 255, 128 / 255, 128 / 255, 255 / 255), 1.0);
 
 			console.time('compute transmittance');
 			atmosLUTsGenerator.computeTransmittance(renderer);
@@ -87,11 +86,7 @@
 
 			inscatterHelper = new LUTHelper(lutsData.inscatterTexture);
 			inscatterHelper.position.set(1.1, 0, 0);
-			if (lutsData.use3DInscatterTexture) {
-				inscatterHelper.scale.set(2, 0.5, 1);
-			} else {
-				inscatterHelper.scale.set(2, 0.5, lutsData.altitudeLayers);
-			}
+			inscatterHelper.scale.set(2, 0.5, 1);
 			scene.add(inscatterHelper);
 
 			irradianceHelper = new LUTHelper(lutsData.irradianceTexture);
@@ -118,9 +113,7 @@
 
 		const precomputeOptions = {
 			transmittanceMapping: 2,
-			inscatterMapping: 1,
-			use3DInscatterTexture: true,
-			altitudeLayers: 4
+			inscatterMapping: 1
 		};
 		
 		precompute();
@@ -139,18 +132,6 @@
 		pane.addBinding(precomputeOptions, 'inscatterMapping', {
 			label: 'Inscatter Mapping',
 			options: { 'Linear': 0, 'Non-Linear': 1 }
-		});
-
-		pane.addBinding(precomputeOptions, 'use3DInscatterTexture', {
-			label: '3D Inscatter'
-		}).on('change', ({ value }) => {
-			altitudeLayersControl.disabled = value;
-		});
-
-		const altitudeLayersControl = pane.addBinding(precomputeOptions, 'altitudeLayers', {
-			label: 'Altitude Layers',
-			options: { 'Only one Layer': 1, 'Four Layers': 4 },
-			disabled: precomputeOptions.use3DInscatterTexture
 		});
 
 		//

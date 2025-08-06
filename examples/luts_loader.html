@@ -81,11 +81,7 @@
 
 			const inscatterHelper = new LUTHelper(lutsData.inscatterTexture);
 			inscatterHelper.position.set(1.1, 0, 0);
-			if (lutsData.use3DInscatterTexture) {
-				inscatterHelper.scale.set(2, 0.5, 1);
-			} else {
-				inscatterHelper.scale.set(2, 0.5, lutsData.altitudeLayers);
-			}
+			inscatterHelper.scale.set(2, 0.5, 1);
 			scene.add(inscatterHelper);
 
 			const irradianceHelper = new LUTHelper(lutsData.irradianceTexture);
