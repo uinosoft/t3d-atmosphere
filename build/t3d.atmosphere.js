@@ -1,9 +1,9 @@
 // t3d-atmosphere
 (function (global, factory) {
-	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('t3d')) :
-	typeof define === 'function' && define.amd ? define(['exports', 't3d'], factory) :
-	(global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.t3d = global.t3d || {}, global.t3d));
-})(this, (function (exports, t3d) { 'use strict';
+	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('t3d'), require('t3d-effect-composer')) :
+	typeof define === 'function' && define.amd ? define(['exports', 't3d', 't3d-effect-composer'], factory) :
+	(global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.t3d = global.t3d || {}, global.t3d, global.t3d));
+})(this, (function (exports, t3d, t3dEffectComposer) { 'use strict';
 
 	const IRRADIANCE_TEXTURE_WIDTH = 64;
 	const IRRADIANCE_TEXTURE_HEIGHT = 16;
@@ -421,7 +421,139 @@ vec3 GetIrradiance(float r, float mu_s) {
 		color.b = mix(1.0 - exp(-color.b), pow(color.b * 0.38317, 1.0 / 2.2), step(color.b, 1.413));
 		return color;
 	}
+#else
+	vec3 ToneMapping(vec3 color) {
+		return color; // no tone mapping
+	}
 #endif
+`;
+
+	const Runtime = /* glsl */`
+bool RayIntersectsGround(float r, float mu) {
+	return mu < 0.0 && r * r * (mu * mu - 1.0) + atmosphere.bottom_radius * atmosphere.bottom_radius >= 0.0;
+}
+
+bool RayIntersectsGround(vec3 camera, vec3 view_ray) {
+	float r = length(camera);
+	float mu = dot(camera, view_ray) / r;
+	return mu < 0.0 && r * r * (mu * mu - 1.0) + atmosphere.bottom_radius * atmosphere.bottom_radius >= 0.0;
+}
+
+float RaySphereFirstIntersection(vec3 origin, vec3 direction, vec3 center, float radius) {
+	vec3 a = origin - center;
+	float b = 2.0 * dot(direction, a);
+	float c = dot(a, a) - radius * radius;
+	float discriminant = b * b - 4.0 * c;
+	return discriminant < 0.0
+		? -1.0
+		: (-b - sqrt(discriminant)) * 0.5;
+}
+
+float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
+	return RaySphereFirstIntersection(origin, direction, vec3(0.0), radius);
+}
+
+vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, out vec3 transmittance) {
+	float r = length(camera);
+	float rmu = dot(camera, view_ray);
+
+	float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
+	
+	if (distance_to_top_atmosphere_boundary > 0.0) {
+		camera = camera + view_ray * distance_to_top_atmosphere_boundary;
+		r = atmosphere.top_radius;
+		rmu += distance_to_top_atmosphere_boundary;
+	} else if (r > atmosphere.top_radius) {
+		transmittance = vec3(1.0);
+		return vec3(0.0);
+	}
+
+	float mu = rmu / r;
+	float mu_s = dot(camera, sun_direction) / r;
+	float nu = dot(view_ray, sun_direction);
+
+	bool ray_r_mu_intersects_ground = RayIntersectsGround(r, mu);
+
+	transmittance = ray_r_mu_intersects_ground
+		? vec3(0.0)
+		: GetTransmittanceToTopAtmosphereBoundary(r, mu);
+
+	vec3 single_mie_scattering;
+	vec3 scattering = GetCombinedScattering(r, mu, mu_s, nu, ray_r_mu_intersects_ground, single_mie_scattering);
+
+	return scattering * RayleighPhaseFunction(nu) +
+		single_mie_scattering * MiePhaseFunction(atmosphere.mie_phase_function_g, nu);
+}
+
+vec3 GetSkyRadianceToPoint(vec3 camera, vec3 point, vec3 sun_direction, out vec3 transmittance) {
+	vec3 view_ray = normalize(point - camera);
+	float r = length(camera);
+	float rmu = dot(camera, view_ray);
+
+	float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
+
+	// If the viewer is in space and the view ray intersects the atmosphere, move
+	// the viewer to the top atmosphere boundary (along the view ray):
+	if (distance_to_top_atmosphere_boundary > 0.0) {
+		camera = camera + view_ray * distance_to_top_atmosphere_boundary;
+		r = atmosphere.top_radius;
+		rmu += distance_to_top_atmosphere_boundary;
+	}
+
+	float mu = rmu / r;
+	float mu_s = dot(camera, sun_direction) / r;
+	float nu = dot(view_ray, sun_direction);
+
+	float d = length(point - camera);
+
+	bool ray_r_mu_intersects_ground = RayIntersectsGround(r, mu);
+
+	// Hack to avoid rendering artifacts near the horizon, due to finite
+	// atmosphere texture resolution and finite floating point precision.
+	// See: https://github.com/ebruneton/precomputed_atmospheric_scattering/pull/32
+	if (!ray_r_mu_intersects_ground) {
+		float mu_horiz = -SafeSqrt(1.0 - atmosphere.bottom_radius / r * (atmosphere.bottom_radius / r));
+		mu = max(mu, mu_horiz + 0.004);
+	}
+
+	transmittance = GetTransmittance(r, mu, d, ray_r_mu_intersects_ground);
+
+	vec3 single_mie_scattering;
+	vec3 scattering = GetCombinedScattering(r, mu, mu_s, nu, ray_r_mu_intersects_ground, single_mie_scattering);
+
+	d = max(d, 0.0);
+	float r_p = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r));
+	float mu_p = (r * mu + d) / r_p;
+	float mu_s_p = (r * mu_s + d * nu) / r_p;
+
+	vec3 single_mie_scattering_p;
+	vec3 scattering_p = GetCombinedScattering(r_p, mu_p, mu_s_p, nu, ray_r_mu_intersects_ground, single_mie_scattering_p);
+
+	// Combine the lookup results to get the scattering between camera and point.
+	scattering = scattering - transmittance * scattering_p;
+	single_mie_scattering = single_mie_scattering - transmittance * single_mie_scattering_p;
+
+	single_mie_scattering = GetMie(vec4(scattering, single_mie_scattering.r));
+
+	// Hack to avoid rendering artifacts when the sun is below the horizon.
+	single_mie_scattering = single_mie_scattering * smoothstep(float(0.0), float(0.01), mu_s);
+
+	return scattering * RayleighPhaseFunction(nu) + 
+		single_mie_scattering * MiePhaseFunction(atmosphere.mie_phase_function_g, nu);
+}
+
+vec3 GetSunAndSkyIrradiance(vec3 point, vec3 normal, vec3 sun_direction, out vec3 sky_irradiance) {
+	float r = length(point);
+	float mu_s = dot(point, sun_direction) / r;
+
+	// Indirect irradiance (approximated if the surface is not horizontal).
+	sky_irradiance = GetIrradiance(r, mu_s) * (1.0 + dot(normal, point) / r) * 0.5;
+
+	// Direct irradiance.
+	return atmosphere.solar_irradiance *
+		GetTransmittanceToSun(r, mu_s) *
+		max(dot(normal, sun_direction), 0.0);
+}
 `;
 
 	const AtmosSkyShader = {
@@ -435,18 +567,20 @@ vec3 GetIrradiance(float r, float mu_s) {
 			SKY_SUNDISK: true
 		},
 		uniforms: {
+			/* Atmosphere Uniforms */
+
 			inscatteringTexture: null,
 			transmittanceTexture: null,
 			irradianceTexture: null,
-			// Camera position in atmosphere coordinates, where the center of the Earth is at (0, 0, 0) and the radius is atmosphere.bottom_radius.
-			// If the external world coordinate system is not consistent with the atmosphere coordinate system
-			// (for example, in the case of the Earth being an ellipsoid), coordinate transformation is required.
-			cameraPosition: [0, 0, 0],
+			cameraPosition: new Array(3),
+			sunDirection: new Array(3),
+			altitudeCorrection: new Array(3),
 			toneMappingExposure: 10.0,
-			sunDirSize: [0, 1, 0, 1]
+			/* Sky Uniforms */
+
+			sunDiskSize: 1
 		},
 		vertexShader: /* glsl */`
-				#define PI 3.14159265359
 		#define METER_TO_LENGTH_UNIT ${METER_TO_LENGTH_UNIT.toFixed(7)}
 
 				attribute vec3 a_Position;
@@ -456,8 +590,7 @@ vec3 GetIrradiance(float r, float mu_s) {
 		uniform mat4 u_Model;
 
 		uniform vec3 cameraPosition;
-
-				uniform vec4 sunDirSize;
+		uniform vec3 altitudeCorrection;
 
 		varying vec3 vCameraPosition;
 		varying vec3 vRayDirection;
@@ -495,24 +628,21 @@ vec3 GetIrradiance(float r, float mu_s) {
 			vec3 direction, origin;
 				getCameraRay(origin, direction);
 
-			vCameraPosition = origin * METER_TO_LENGTH_UNIT;
+			vCameraPosition = (origin + altitudeCorrection) * METER_TO_LENGTH_UNIT;
 			vRayDirection = direction;
 
 			gl_Position = vec4(a_Position.xz, 1.0, 1.0);
 				}
 		`,
 		fragmentShader: /* glsl */`
-				uniform vec4 sunDirSize;
-
 		uniform highp sampler3D inscatteringTexture;
-			 
 				uniform sampler2D transmittanceTexture;
-
 		uniform sampler2D irradianceTexture;
 
 				uniform float toneMappingExposure;
 
-		uniform vec3 cameraPosition;
+		uniform vec3 sunDirection;
+		uniform float sunDiskSize;
 
 		varying vec3 vCameraPosition;
 		varying vec3 vRayDirection;
@@ -521,132 +651,7 @@ vec3 GetIrradiance(float r, float mu_s) {
 		${TransmittanceLookup}
 		${InscatterLookup}
 		${IrradianceLookup}
-
-		bool RayIntersectsGround(float r, float mu) {
-			return mu < 0.0 && r * r * (mu * mu - 1.0) + atmosphere.bottom_radius * atmosphere.bottom_radius >= 0.0;
-		}
-
-		bool RayIntersectsGround(vec3 camera, vec3 view_ray) {
-			float r = length(camera);
-			float mu = dot(camera, view_ray) / r;
-			return mu < 0.0 && r * r * (mu * mu - 1.0) + atmosphere.bottom_radius * atmosphere.bottom_radius >= 0.0;
-		}
-
-		float RaySphereFirstIntersection(vec3 origin, vec3 direction, vec3 center, float radius) {
-			vec3 a = origin - center;
-			float b = 2.0 * dot(direction, a);
-			float c = dot(a, a) - radius * radius;
-			float discriminant = b * b - 4.0 * c;
-			return discriminant < 0.0
-				? -1.0
-				: (-b - sqrt(discriminant)) * 0.5;
-		}
-
-		float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
-			return RaySphereFirstIntersection(origin, direction, vec3(0.0), radius);
-		}
-
-				vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, out vec3 transmittance) {
-						float r = length(camera);
-						float rmu = dot(camera, view_ray);
-
-						float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
-						
-						if (distance_to_top_atmosphere_boundary > 0.0) {
-								camera = camera + view_ray * distance_to_top_atmosphere_boundary;
-				r = atmosphere.top_radius;
-								rmu += distance_to_top_atmosphere_boundary;
-						} else if (r > atmosphere.top_radius) {
-			 	transmittance = vec3(1.0);
-				return vec3(0.0);
-			}
-
-			float mu = rmu / r;
-			float mu_s = dot(camera, sun_direction) / r;
-						float nu = dot(view_ray, sun_direction);
-
-			bool ray_r_mu_intersects_ground = RayIntersectsGround(r, mu);
-
-						transmittance = ray_r_mu_intersects_ground
-				? vec3(0.0)
-				: GetTransmittanceToTopAtmosphereBoundary(r, mu);
-
-			vec3 single_mie_scattering;
-			vec3 scattering = GetCombinedScattering(r, mu, mu_s, nu, ray_r_mu_intersects_ground, single_mie_scattering);
-
-						return scattering * RayleighPhaseFunction(nu) +
-				single_mie_scattering * MiePhaseFunction(atmosphere.mie_phase_function_g, nu);
-				}
-
-		vec3 GetSkyRadianceToPoint(vec3 camera, vec3 point, vec3 sun_direction, out vec3 transmittance) {
-			vec3 view_ray = normalize(point - camera);
-			float r = length(camera);
-			float rmu = dot(camera, view_ray);
-
-			float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
-
-			// If the viewer is in space and the view ray intersects the atmosphere, move
-			// the viewer to the top atmosphere boundary (along the view ray):
-			if (distance_to_top_atmosphere_boundary > 0.0) {
-				camera = camera + view_ray * distance_to_top_atmosphere_boundary;
-				r = atmosphere.top_radius;
-				rmu += distance_to_top_atmosphere_boundary;
-			}
-
-			float mu = rmu / r;
-			float mu_s = dot(camera, sun_direction) / r;
-			float nu = dot(view_ray, sun_direction);
-
-			float d = length(point - camera);
-
-			bool ray_r_mu_intersects_ground = RayIntersectsGround(r, mu);
-
-			// Hack to avoid rendering artifacts near the horizon, due to finite
-			// atmosphere texture resolution and finite floating point precision.
-			// See: https://github.com/ebruneton/precomputed_atmospheric_scattering/pull/32
-			if (!ray_r_mu_intersects_ground) {
-				float mu_horiz = -SafeSqrt(1.0 - atmosphere.bottom_radius / r * (atmosphere.bottom_radius / r));
-				mu = max(mu, mu_horiz + 0.004);
-			}
-
-			transmittance = GetTransmittance(r, mu, d, ray_r_mu_intersects_ground);
-
-			vec3 single_mie_scattering;
-			vec3 scattering = GetCombinedScattering(r, mu, mu_s, nu, ray_r_mu_intersects_ground, single_mie_scattering);
-
-			d = max(d, 0.0);
-			float r_p = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r));
-			float mu_p = (r * mu + d) / r_p;
-			float mu_s_p = (r * mu_s + d * nu) / r_p;
-
-			vec3 single_mie_scattering_p;
-			vec3 scattering_p = GetCombinedScattering(r_p, mu_p, mu_s_p, nu, ray_r_mu_intersects_ground, single_mie_scattering_p);
-
-			// Combine the lookup results to get the scattering between camera and point.
-			scattering = scattering - transmittance * scattering_p;
-			single_mie_scattering = single_mie_scattering - transmittance * single_mie_scattering_p;
-
-			single_mie_scattering = GetMie(vec4(scattering, single_mie_scattering.r));
-
-			// Hack to avoid rendering artifacts when the sun is below the horizon.
-			single_mie_scattering = single_mie_scattering * smoothstep(float(0.0), float(0.01), mu_s);
-
-			return scattering * RayleighPhaseFunction(nu) + 
-				single_mie_scattering * MiePhaseFunction(atmosphere.mie_phase_function_g, nu);
-		}
-
-		vec3 GetSunAndSkyIrradiance(vec3 point, vec3 normal, vec3 sun_direction, out vec3 sky_irradiance) {
-			float r = length(point);
-			float mu_s = dot(point, sun_direction) / r;
-
-			// Indirect irradiance (approximated if the surface is not horizontal).
-			sky_irradiance = GetIrradiance(r, mu_s) * (1.0 + dot(normal, point) / r) * 0.5;
-
-			// Direct irradiance.
-			return atmosphere.solar_irradiance *
-				GetTransmittanceToSun(r, mu_s) *
-				max(dot(normal, sun_direction), 0.0);
-		}
+		${Runtime}
 
 		${ToneMapping}
 
@@ -655,7 +660,7 @@ vec3 GetIrradiance(float r, float mu_s) {
 				void main() {
 			vec3 camera = vCameraPosition;
 						vec3 view_ray = normalize(vRayDirection);
-						float nu = dot(view_ray, sunDirSize.xyz);
+						float nu = dot(view_ray, sunDirection);
 
 			vec3 col = vec3(0.0);
 			vec3 transmittance = vec3(0.0);
@@ -671,14 +676,14 @@ vec3 GetIrradiance(float r, float mu_s) {
 					vec3 sunIrradiance = GetSunAndSkyIrradiance(
 						camera,
 						surface_normal, 
-						sunDirSize.xyz, 
+						sunDirection, 
 						skyIrradiance
 					);
 
 					vec3 inscatter = GetSkyRadianceToPoint(
 						camera,
 						surface_normal * (atmosphere.bottom_radius + 1.0),
-						sunDirSize.xyz,
+						sunDirection,
 						transmittance
 					);
 
@@ -687,16 +692,16 @@ vec3 GetIrradiance(float r, float mu_s) {
 
 					transmittance = vec3(0.0);
 				} else {
-					col = GetSkyRadiance(camera, view_ray, sunDirSize.xyz, transmittance);
+					col = GetSkyRadiance(camera, view_ray, sunDirection, transmittance);
 				}
 			#else
-				col = GetSkyRadiance(camera, view_ray, sunDirSize.xyz, transmittance);
+				col = GetSkyRadiance(camera, view_ray, sunDirection, transmittance);
 			#endif
 
 			col = ToneMapping(col);
 			
 						#ifdef SKY_SUNDISK
-				float sun = 0.004 * sunDirSize.w * MiePhaseFunction(0.99, nu);
+				float sun = 0.004 * sunDiskSize * MiePhaseFunction(0.99, nu);
 						col += sun * transmittance;
 						#endif
 
@@ -744,6 +749,210 @@ vec3 GetIrradiance(float r, float mu_s) {
 				needsUpdate = true;
 			}
 			this.material.needsUpdate = needsUpdate;
+		}
+	}
+
+	const AtmosFogShader = {
+		name: 'atmos_fog',
+		defines: {
+			TRANSMITTANCE_MAPPING: 1,
+			INSCATTER_MAPPING: 1,
+			TONE_MAPPING: 5,
+			SRGB_OUTPUT: true
+		},
+		uniforms: {
+			/* Atmosphere Uniforms */
+
+			inscatteringTexture: null,
+			transmittanceTexture: null,
+			irradianceTexture: null,
+			cameraPosition: new Array(3),
+			sunDirection: new Array(3),
+			altitudeCorrection: new Array(3),
+			toneMappingExposure: 10.0,
+			/* Fog Uniforms */
+
+			tDiffuse: null,
+			depthTexture: null,
+			projectionView: new Array(16),
+			anchorMatrix: new Array(16),
+			ellipsoidRadii: new Array(3),
+			geometricErrorCorrectionAmount: 1.0
+		},
+		vertexShader: /* glsl */`
+		#define METER_TO_LENGTH_UNIT ${METER_TO_LENGTH_UNIT.toFixed(7)}
+
+		attribute vec3 a_Position;
+		attribute vec2 a_Uv;
+
+		uniform mat4 u_Projection;
+		uniform mat4 u_View;
+		uniform mat4 u_Model;
+
+		uniform vec3 cameraPosition;
+		uniform vec3 altitudeCorrection;
+		uniform vec3 ellipsoidRadii;
+		uniform float geometricErrorCorrectionAmount;
+
+		varying vec3 vCameraPosition;
+		varying vec3 vEllipsoidRadiiSquared;
+		varying vec3 vGeometryAltitudeCorrection;
+		varying vec2 v_Uv;
+
+		void main() {
+			gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+
+			vCameraPosition = (cameraPosition + altitudeCorrection) * METER_TO_LENGTH_UNIT;
+			
+			vec3 radii = ellipsoidRadii * METER_TO_LENGTH_UNIT;
+				vEllipsoidRadiiSquared = radii * radii;
+
+			vGeometryAltitudeCorrection = altitudeCorrection * METER_TO_LENGTH_UNIT;
+			vGeometryAltitudeCorrection *= 1.0 - geometricErrorCorrectionAmount;
+
+			v_Uv = a_Uv;
+		}
+	`,
+		fragmentShader: /* glsl */`
+		uniform highp sampler3D inscatteringTexture;
+				uniform sampler2D transmittanceTexture;
+		uniform sampler2D irradianceTexture;
+
+		uniform float toneMappingExposure;
+
+		uniform vec3 sunDirection;
+
+		uniform sampler2D tDiffuse;
+		uniform sampler2D depthTexture;
+		uniform mat4 projectionView;
+		uniform mat4 anchorMatrix;
+		uniform float geometricErrorCorrectionAmount;
+
+		varying vec3 vCameraPosition;
+		varying vec3 vEllipsoidRadiiSquared;
+		varying vec3 vGeometryAltitudeCorrection;
+		varying vec2 v_Uv;
+
+		${AtmosphereCommon}
+		${TransmittanceLookup}
+		${InscatterLookup}
+		${IrradianceLookup}
+		${Runtime}
+
+		${ToneMapping}
+
+		void correctGeometricError(inout vec3 positionECEF, inout vec3 normalECEF) {
+			// TODO: The error is pronounced at the edge of the ellipsoid due to the
+			// large difference between the sphere position and the unprojected position
+			// at the current fragment. Calculating the sphere position from the fragment
+			// UV may resolve this.
+
+			// Correct way is slerp, but this will be small-angle interpolation anyways.
+			vec3 sphereNormal = normalize(positionECEF / vEllipsoidRadiiSquared);
+			vec3 spherePosition = atmosphere.bottom_radius * sphereNormal;
+			normalECEF = mix(normalECEF, sphereNormal, geometricErrorCorrectionAmount);
+			positionECEF = mix(positionECEF, spherePosition, geometricErrorCorrectionAmount);
+		}
+
+				void main() {
+			vec2 texCoord = v_Uv;
+
+			vec4 inputColor = texture2D(tDiffuse, texCoord);
+
+			float depth = texture2D(depthTexture, texCoord).r;
+
+			if (depth >= 1.0 - 1e-8) {
+				gl_FragColor = inputColor;
+				return;
+			}
+
+			vec2 xy = texCoord * 2.0 - 1.0;
+			float z = depth * 2.0 - 1.0;
+			vec4 projectedPosition = vec4(xy, z, 1.0);
+			vec4 worldPosition4 = anchorMatrix * inverse(projectionView) * projectedPosition;
+			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
+
+			worldPosition = worldPosition * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
+			vec3 worldNormal = normalize(worldPosition);
+
+			correctGeometricError(worldPosition, worldNormal);
+
+			vec3 transmittance;
+			vec3 inscatter = GetSkyRadianceToPoint(
+				vCameraPosition,
+				worldPosition,
+				sunDirection,
+				transmittance
+			);
+
+			inputColor.rgb *= transmittance;
+			inputColor.rgb += inscatter;
+			
+						gl_FragColor = inputColor;
+				}
+	`
+	};
+
+	class AtmosFogEffect extends t3dEffectComposer.Effect {
+		constructor() {
+			super();
+			this.bufferDependencies = [{
+				key: 'GBuffer'
+			}];
+			this._mainPass = new t3d.ShaderPostPass(AtmosFogShader);
+		}
+		setLUTs(lutsData) {
+			const {
+				transmittanceTexture,
+				inscatterTexture,
+				irradianceTexture
+			} = lutsData;
+			const {
+				uniforms,
+				defines
+			} = this._mainPass.material;
+			uniforms.transmittanceTexture = transmittanceTexture;
+			uniforms.inscatteringTexture = inscatterTexture;
+			uniforms.irradianceTexture = irradianceTexture;
+			uniforms.atmosphere = lutsData.atmosphere.toUniform();
+			let needsUpdate = false;
+			if (defines.TRANSMITTANCE_MAPPING !== lutsData.transmittanceMapping) {
+				defines.TRANSMITTANCE_MAPPING = lutsData.transmittanceMapping;
+				needsUpdate = true;
+			}
+			if (defines.INSCATTER_MAPPING !== lutsData.inscatterMapping) {
+				defines.INSCATTER_MAPPING = lutsData.inscatterMapping;
+				needsUpdate = true;
+			}
+			this._mainPass.material.needsUpdate = needsUpdate;
+		}
+		render(renderer, composer, inputRenderTarget, outputRenderTarget, finish) {
+			const gBuffer = composer.getBuffer('GBuffer');
+			const gBufferRenderStates = gBuffer.getCurrentRenderStates();
+			gBufferRenderStates.camera.projectionViewMatrix.toArray(this._mainPass.uniforms.projectionView);
+			gBufferRenderStates.scene.anchorMatrix.toArray(this._mainPass.uniforms.anchorMatrix);
+			renderer.setRenderTarget(outputRenderTarget);
+			renderer.setClearColor(0, 0, 0, 0);
+			if (finish) {
+				renderer.clear(composer.clearColor, composer.clearDepth, composer.clearStencil);
+			} else {
+				renderer.clear(true, true, false);
+			}
+			const mainPass = this._mainPass;
+			mainPass.uniforms.tDiffuse = inputRenderTarget.texture;
+			mainPass.uniforms.depthTexture = gBuffer.output()._attachments[t3d.ATTACHMENT.DEPTH_STENCIL_ATTACHMENT];
+			if (finish) {
+				mainPass.material.transparent = composer._tempClearColor[3] < 1 || !composer.clearColor;
+				mainPass.renderStates.camera.rect.fromArray(composer._tempViewport);
+			}
+			mainPass.render(renderer);
+			if (finish) {
+				mainPass.material.transparent = false;
+				mainPass.renderStates.camera.rect.set(0, 0, 1, 1);
+			}
+		}
+		dispose() {
+			this._mainPass.dispose();
 		}
 	}
 
@@ -1642,6 +1851,7 @@ vec3 ComputeIndirectIrradiance(float r, float mu_s) {
 		return target.setRGB(radiance.x, radiance.y, radiance.z);
 	}
 
+	exports.AtmosFogEffect = AtmosFogEffect;
 	exports.AtmosLUTsGenerator = AtmosLUTsGenerator;
 	exports.AtmosLUTsLoader = AtmosLUTsLoader;
 	exports.AtmosSky = AtmosSky;

@@ -20,6 +20,7 @@
             "imports": {
                 "t3d": "./node_modules/t3d/build/t3d.module.js",
                 "t3d/addons/": "./node_modules/t3d/examples/jsm/",
+				"t3d-effect-composer": "./node_modules/t3d-effect-composer/build/t3d.effectcomposer.module.js",
 				"t3d-3dtiles": "./node_modules/t3d-3dtiles/build/t3d.3dtiles.module.js",
 				"t3d-atmosphere": "../build/t3d.atmosphere.module.js",
 				"tweakpane": "./node_modules/tweakpane/dist/tweakpane.js"
@@ -29,10 +30,10 @@
 
     <script type="module">
 		import * as t3d from 't3d';
-		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { DRACOLoader } from 't3d/addons/loaders/DRACOLoader.js';
+		import { DefaultEffectComposer, ToneMappingEffect, ToneMappingType } from 't3d-effect-composer';
 		import { TilesRenderer, CesiumIonAuthPlugin, ReorientationPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, getAltitudeCorrectionOffset, getSkyLightSH } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosFogEffect, getAltitudeCorrectionOffset, getSkyLightSH } from 't3d-atmosphere';
 		import ionAccessToken from './ionAccessToken.js';
 		import { Pane } from 'tweakpane';
 
@@ -47,14 +48,33 @@
 		canvas.height = height;
 		container.appendChild(canvas);
 
-		const forwardRenderer = new ForwardRenderer(canvas, { antialias: true, alpha: true });
-		forwardRenderer.setClearColor(0, 0, 0, 0);
+		const gl = canvas.getContext('webgl2');
+		const renderer = new t3d.WebGLRenderer(gl);
+		renderer.setClearColor(0, 0, 0, 0);
+
+		const backRenderTarget = new t3d.RenderTargetBack(canvas);
+
+		const effectComposer = new DefaultEffectComposer(width, height, {
+			samplerNumber: Math.min(renderer.capabilities.maxSamples, 5),
+			webgl2: renderer.capabilities.version > 1,
+			highDynamicRange: true
+		});
+		effectComposer.sceneMSAA = true;
+
+		const atmosFogEffect = new AtmosFogEffect();
+		effectComposer.addEffect('AtmosFog', atmosFogEffect, 1);
+
+		const toneMappingEffect = new ToneMappingEffect();
+		toneMappingEffect.toneMapping = ToneMappingType.AgX;
+		toneMappingEffect.toneMappingExposure = 3.0;
+		effectComposer.addEffect('ToneMapping', toneMappingEffect, 2);
 
 		const scene = new t3d.Scene();
 
 		const camera = new t3d.Camera();
 		camera.setPerspective(60 / 180 * Math.PI, width / height, 1, 160000000);
-		camera.position.set(0, 0, 15000000);
+		camera.position.set(0, 0, -15000000);
+		camera.lookAt(new t3d.Vector3(0, 0, 0), new t3d.Vector3(0, 1, 0));
 		scene.add(camera);
 
 		const controller = new GlobeControls(scene, camera, canvas);
@@ -73,43 +93,11 @@
 			dracoLoader: new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.3/')
 		}));
 
-		tiles.addEventListener('load-model', onLoadModel);
-		tiles.addEventListener('dispose-model', onDisposeModel);
-
 		tiles.addCamera(camera);
 		tiles.setResolution(width, height);
 		scene.add(tiles.group);
 
 		controller.setEllipsoid(tiles.ellipsoid, tiles.group);
-
-		function onLoadModel({ scene }) {
-			scene.traverse(c => {
-				if (c.isMesh) {
-					c.originalMaterial = c.material;
-				}
-			});
-
-			updateMaterial(scene);
-		}
-
-		function onDisposeModel({ scene }) {
-			scene.traverse(c => {
-				if (c.isMesh) {
-					c.material.dispose();
-				}
-			});
-		}
-
-		function updateMaterial(scene) {
-			scene.traverse(c => {
-				if (c.isMesh) {
-					c.material.dispose();
-					c.material = new t3d.LambertMaterial();
-					c.material.diffuseMap = c.originalMaterial.diffuseMap;
-					c.material.shading = t3d.SHADING_TYPE.FLAT_SHADING;
-				}
-			});
-		}
 
 		// luts
 
@@ -128,18 +116,18 @@
 			}
 
 			if (precomputeOptions.source === 'generator') {
-				atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
+				atmosLUTsGenerator = new AtmosLUTsGenerator(renderer.capabilities, precomputeOptions);
 
 				console.time('compute transmittance');
-				atmosLUTsGenerator.computeTransmittance(forwardRenderer);
+				atmosLUTsGenerator.computeTransmittance(renderer);
 				console.timeEnd('compute transmittance');
 
 				console.time('compute inscatter');
-				atmosLUTsGenerator.computeInscatter(forwardRenderer);
+				atmosLUTsGenerator.computeInscatter(renderer);
 				console.timeEnd('compute inscatter');
 
 				console.time('compute irradiance');
-				atmosLUTsGenerator.computeIrradiance(forwardRenderer);
+				atmosLUTsGenerator.computeIrradiance(renderer);
 				console.timeEnd('compute irradiance');
 
 				// get transmittance pixels for sun light color calculation
@@ -149,20 +137,20 @@
 				const data = transmittanceRT.texture.type === t3d.PIXEL_TYPE.FLOAT ?
 					new Float32Array(width * height * 4) :
 					new Uint16Array(width * height * 4);
-				forwardRenderer.setRenderTarget(transmittanceRT);
-				forwardRenderer.readRenderTargetPixels(
+				renderer.setRenderTarget(transmittanceRT);
+				renderer.readRenderTargetPixels(
 					0, 0, width, height,
 					data
 				);
 				transmittanceRT.texture.image.data = data;
 				console.timeEnd('read transmittance pixels');
 
-				atmosLUTsGenerator.readIrradiancePixels(forwardRenderer);
+				atmosLUTsGenerator.readIrradiancePixels(renderer);
 
 				atmosLUTsData = atmosLUTsGenerator.data;
 			} else {
 				if (!atmosLUTsLoader) {
-					atmosLUTsLoader = new AtmosLUTsLoader(forwardRenderer.capabilities);
+					atmosLUTsLoader = new AtmosLUTsLoader(renderer.capabilities);
 
 					console.time('load transmittance');
 					await atmosLUTsLoader.loadTransmittanceTexture('./assets/transmittance.bin');
@@ -189,6 +177,10 @@
 		scene.add(sky);
 
 		const skyMaterial = sky.material;
+		skyMaterial.defines.TONE_MAPPING = -1;
+		skyMaterial.defines.SRGB_OUTPUT = false;
+		skyMaterial.defines.GROUND_ALBEDO = false;
+		skyMaterial.uniforms.toneMappingExposure = 1.0;
 
 		const skyLight = new t3d.SphericalHarmonicsLight();
 		scene.add(skyLight);
@@ -212,13 +204,14 @@
 			directionalLight.lookAt(new t3d.Vector3(), new t3d.Vector3(0, 1, 0));
 
 			vector3.normalize();
-			vector3.toArray(skyMaterial.uniforms['sunDirSize']);
+			vector3.toArray(skyMaterial.uniforms.sunDirection);
 		}
 
 		function setSunLightColor() {}
 
 		getLUTsData().then(lutsData => {
 			sky.setLUTs(lutsData);
+			atmosFogEffect.setLUTs(lutsData);
 			setSunLightDirection();
 		});
 
@@ -238,14 +231,20 @@
 			}
 		}).on('change', async ({ value }) => {
 			pane.disabled = true;
-			sky.setLUTs(await getLUTsData());
+
+			const lutsData = await getLUTsData();
+			sky.setLUTs(lutsData);
+			atmosFogEffect.setLUTs(lutsData);
+		
 			pane.disabled = false;
 			precomputeFolder.disabled = value === 'loader';
 		});
 		const precomputeFolder = lutsFolder.addFolder({
 			title: 'Generator Options'
 		}).on('change', async () => {
-			sky.setLUTs(await getLUTsData());
+			const lutsData = await getLUTsData();
+			sky.setLUTs(lutsData);
+			atmosFogEffect.setLUTs(lutsData);
 		});
 		precomputeFolder.addBinding(precomputeOptions, 'transmittanceMapping', {
 			label: 'Transmittance Mapping',
@@ -261,9 +260,12 @@
 			expanded: false
 		});
 		groundFolder.addBinding(skyMaterial.defines, 'GROUND_ALBEDO', {
-			label: 'enable'
+			label: 'sky ground albedo'
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
+		});
+		groundFolder.addBinding(tiles.group, 'visible', {
+			label: 'Show Earth'
 		});
 
 		const sunFolder = pane.addFolder({
@@ -284,38 +286,45 @@
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
 		});
-		sunFolder.addBinding(skyMaterial.uniforms.sunDirSize, '3', {
+		sunFolder.addBinding(skyMaterial.uniforms, 'sunDiskSize', {
 			min: 0,
 			label: 'Disk Size'
+		});
+
+		const skyLightFolder = pane.addFolder({
+			title: 'Sky Light',
+			expanded: false
+		});
+		skyLightFolder.addBinding(skyLight, 'visible', {
+			label: 'Enable'
+		});
+
+		const fogFolder = pane.addFolder({
+			title: 'Fog Effect',
+			expanded: false
+		});
+		fogFolder.addBinding(atmosFogEffect, 'active', {
+			label: 'Enable'
+		});
+		fogFolder.addBinding(atmosFogEffect._mainPass.material.uniforms, 'geometricErrorCorrectionAmount', {
+			min: 0,
+			max: 1,
+			step: 0.01,
+			label: 'Geometric Error Correction'
 		});
 
 		const toneMappingFolder = pane.addFolder({
 			title: 'Tone Mapping',
 			expanded: false
 		});
-		toneMappingFolder.addBinding(skyMaterial.defines, 'TONE_MAPPING', {
+		toneMappingFolder.addBinding(toneMappingEffect, 'toneMapping', {
 			label: 'Tone Mapping',
-			options: {
-				'Linear': 0,
-				'Reinhard': 1,
-				'Optimized Cineon': 2,
-				'ACES Filmic': 3,
-				'Neutral': 4,
-				'AgX': 5,
-				'Unity (Legacy)': 6
-			}
-		}).on('change', () => {
-			skyMaterial.needsUpdate = true;
+			options: ToneMappingType
 		});
-		toneMappingFolder.addBinding(skyMaterial.uniforms, 'toneMappingExposure', {
+		toneMappingFolder.addBinding(toneMappingEffect, 'toneMappingExposure', {
 			min: 0,
 			step: 1,
 			label: 'Exposure'
-		});
-		toneMappingFolder.addBinding(skyMaterial.defines, 'SRGB_OUTPUT', {
-			label: 'sRGB Output'
-		}).on('change', () => {
-			skyMaterial.needsUpdate = true;
 		});
 
 		const otherFolder = pane.addFolder({
@@ -332,7 +341,7 @@
 
 		const _cameraPosition = new t3d.Vector3();
 		const _sunDirection = new t3d.Vector3();
-		const _altitudeCorrectionOffset = new t3d.Vector3();
+		const _altitudeCorrection = new t3d.Vector3();
 
 		function loop(count) {
 			requestAnimationFrame(loop);
@@ -344,17 +353,36 @@
 			scene.anchorMatrix.copy(camera.worldMatrix);
 		
 			tiles.update();
-		
-			getAltitudeCorrectionOffset(camera.position, 6360000, tiles.ellipsoid, _altitudeCorrectionOffset);
-			_cameraPosition.addVectors(camera.position, _altitudeCorrectionOffset).toArray(skyMaterial.uniforms.cameraPosition);
 
-			if (atmosLUTsData) {
-				_sunDirection.fromArray(skyMaterial.uniforms['sunDirSize']);
+			// Get camera positlion, altitudeCorrection and sun direction
+		
+			_cameraPosition.copy(camera.position);
+			getAltitudeCorrectionOffset(_cameraPosition, 6360000, tiles.ellipsoid, _altitudeCorrection);
+			_sunDirection.fromArray(skyMaterial.uniforms.sunDirection);
+
+			// Set Sky Material Uniforms
+		
+			_cameraPosition.toArray(skyMaterial.uniforms.cameraPosition);
+			_altitudeCorrection.toArray(skyMaterial.uniforms.altitudeCorrection);
+
+			// Set Atmos Fog Effect Uniforms
+
+			_cameraPosition.toArray(atmosFogEffect._mainPass.material.uniforms.cameraPosition);
+			_sunDirection.toArray(atmosFogEffect._mainPass.material.uniforms.sunDirection);
+			_altitudeCorrection.toArray(atmosFogEffect._mainPass.material.uniforms.altitudeCorrection);
+			tiles.ellipsoid.radius.toArray(atmosFogEffect._mainPass.material.uniforms.ellipsoidRadii);
+
+			if (skyLight.visible && atmosLUTsData) {
+				_cameraPosition.add(_altitudeCorrection);
 				_cameraPosition.normalize().multiplyScalar(6360000 + 1);
 				getSkyLightSH(atmosLUTsData.irradianceTexture, _cameraPosition, _sunDirection, skyLight.sh, tiles.ellipsoid);
 			}
 
-			forwardRenderer.render(scene, camera);
+			scene.updateMatrix();
+			scene.updateRenderStates(camera);
+			scene.updateRenderQueue(camera);
+
+			effectComposer.render(renderer, scene, camera, backRenderTarget);
 		}
 		requestAnimationFrame(loop);
 
@@ -364,7 +392,8 @@
 
 			camera.setPerspective(60 / 180 * Math.PI, width / height, 1, 160000000);
 
-			forwardRenderer.backRenderTarget.resize(width, height);
+			backRenderTarget.resize(width, height);
+    		effectComposer.resize(width, height);
 		}
 		window.addEventListener('resize', onWindowResize, false);
 	</script>

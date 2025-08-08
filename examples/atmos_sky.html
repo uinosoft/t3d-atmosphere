@@ -20,6 +20,7 @@
             "imports": {
                 "t3d": "./node_modules/t3d/build/t3d.module.js",
                 "t3d/addons/": "./node_modules/t3d/examples/jsm/",
+				"t3d-effect-composer": "./node_modules/t3d-effect-composer/build/t3d.effectcomposer.module.js",
 				"t3d-atmosphere": "../build/t3d.atmosphere.module.js",
 				"tweakpane": "./node_modules/tweakpane/dist/tweakpane.js"
             }
@@ -164,11 +165,11 @@
 			directionalLight.lookAt(new t3d.Vector3(), new t3d.Vector3(0, 1, 0));
 
 			vector3.normalize();
-			vector3.toArray(skyMaterial.uniforms['sunDirSize']);
+			vector3.toArray(skyMaterial.uniforms.sunDirection);
 		}
 
 		function setSunLightColor() {
-			vector3.fromArray(skyMaterial.uniforms['sunDirSize']);
+			vector3.fromArray(skyMaterial.uniforms.sunDirection);
 			cameraPosition.fromArray(skyMaterial.uniforms.cameraPosition);
 			getSunLightColor(skyMaterial.uniforms.transmittanceTexture, cameraPosition, vector3, directionalLight.color);
 			directionalLight.color.convertLinearToSRGB();
@@ -269,7 +270,7 @@
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
 		});
-		sunFolder.addBinding(skyMaterial.uniforms.sunDirSize, '3', {
+		sunFolder.addBinding(skyMaterial.uniforms, 'sunDiskSize', {
 			min: 0,
 			label: 'Disk Size'
 		});

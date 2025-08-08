@@ -5,5 +5,8 @@
 	"luts": [
 		"luts_generation",
 		"luts_loader"
+	],
+	"globe": [
+		"globe_sky"
 	]
 }

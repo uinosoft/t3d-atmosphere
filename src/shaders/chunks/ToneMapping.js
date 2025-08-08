@@ -167,5 +167,9 @@ export const ToneMapping = /* glsl */`
 		color.b = mix(1.0 - exp(-color.b), pow(color.b * 0.38317, 1.0 / 2.2), step(color.b, 1.413));
 		return color;
 	}
+#else
+	vec3 ToneMapping(vec3 color) {
+		return color; // no tone mapping
+	}
 #endif
 `;

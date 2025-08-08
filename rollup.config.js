@@ -49,7 +49,7 @@ export default [
 			babelCleanup(),
 			header()
 		],
-		external: ['t3d'],
+		external: ['t3d', 't3d-effect-composer'],
 		output: [
 			{
 				format: 'umd',
@@ -57,7 +57,7 @@ export default [
 				extend: true,
 				file: 'build/t3d.atmosphere.js',
 				indent: '\t',
-				globals: { 't3d': 't3d' }
+				globals: { 't3d': 't3d', 't3d-effect-composer': 't3d' }
 			}
 		]
 	},
@@ -73,14 +73,14 @@ export default [
 			terser(),
 			header()
 		],
-		external: ['t3d'],
+		external: ['t3d', 't3d-effect-composer'],
 		output: [
 			{
 				format: 'umd',
 				name: 't3d',
 				extend: true,
 				file: 'build/t3d.atmosphere.min.js',
-				globals: { 't3d': 't3d' }
+				globals: { 't3d': 't3d', 't3d-effect-composer': 't3d' }
 			}
 		]
 	},
@@ -89,7 +89,7 @@ export default [
 		plugins: [
 			header()
 		],
-		external: ['t3d'],
+		external: [/^t3d(\/.*)?$/, /^t3d-effect-composer(\/.*)?$/],
 		output: [
 			{
 				format: 'esm',
