@@ -1,6 +1,6 @@
 // t3d-atmosphere
 import { Mesh, ShaderMaterial, DRAW_SIDE, PlaneGeometry, ShaderPostPass, ATTACHMENT, Vector3, Color3, PIXEL_TYPE, RenderTarget2D, TEXTURE_FILTER, PIXEL_FORMAT, RenderTarget3D, FileLoader, Texture2D, Texture3D, MathUtils, SphericalHarmonics3, Vector2 } from 't3d';
-import { Effect } from 't3d-effect-composer';
+import { octahedronToUnitVectorGLSL, Effect } from 't3d-effect-composer';
 
 const IRRADIANCE_TEXTURE_WIDTH = 64;
 const IRRADIANCE_TEXTURE_HEIGHT = 16;
@@ -768,7 +768,10 @@ const AtmosFogShader = {
 
 		TONE_MAPPING: 5,
 
-		SRGB_OUTPUT: true
+		SRGB_OUTPUT: true,
+
+		SUN_LIGHT: true,
+		SKY_LIGHT: true
 	},
 	uniforms: {
 		/* Atmosphere Uniforms */
@@ -787,12 +790,13 @@ const AtmosFogShader = {
 
 		tDiffuse: null,
 		depthTexture: null,
+		normalTexture: null,
 
 		projectionView: new Array(16),
 		anchorMatrix: new Array(16),
 
 		ellipsoidRadii: new Array(3),
-		geometricErrorCorrectionAmount: 1.0
+		geometricErrorCorrectionAmount: 0.0
 	},
 	vertexShader: /* glsl */`
 		#define METER_TO_LENGTH_UNIT ${METER_TO_LENGTH_UNIT.toFixed(7)}
@@ -839,6 +843,7 @@ const AtmosFogShader = {
 
 		uniform sampler2D tDiffuse;
 		uniform sampler2D depthTexture;
+		uniform sampler2D normalTexture;
 		uniform mat4 projectionView;
 		uniform mat4 anchorMatrix;
 		uniform float geometricErrorCorrectionAmount;
@@ -847,6 +852,8 @@ const AtmosFogShader = {
 		varying vec3 vEllipsoidRadiiSquared;
 		varying vec3 vGeometryAltitudeCorrection;
 		varying vec2 v_Uv;
+
+		${octahedronToUnitVectorGLSL}
 
 		${AtmosphereCommon}
 		${TransmittanceLookup}
@@ -875,8 +882,14 @@ const AtmosFogShader = {
 			vec4 inputColor = texture2D(tDiffuse, texCoord);
 
 			float depth = texture2D(depthTexture, texCoord).r;
+			vec4 gBufferTexel = texture2D(normalTexture, texCoord);
 
-			if (depth >= 1.0 - 1e-8) {
+			// if (depth >= 1.0 - 1e-8) {
+			// 	gl_FragColor = inputColor;
+			// 	return;
+			// }
+
+			if (gBufferTexel.r < -2.0) {
 				gl_FragColor = inputColor;
 				return;
 			}
@@ -888,9 +901,30 @@ const AtmosFogShader = {
 			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
 
 			worldPosition = worldPosition * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
-			vec3 worldNormal = normalize(worldPosition);
+			vec3 worldNormal = octahedronToUnitVector(gBufferTexel.rg);
+			worldNormal = (anchorMatrix * vec4(worldNormal, 0.0)).xyz;
+			worldNormal = normalize(worldNormal);
 
 			correctGeometricError(worldPosition, worldNormal);
+			worldNormal = normalize(worldNormal);
+
+			vec3 radiance;
+			#if defined(SUN_LIGHT) || defined(SKY_LIGHT)
+				vec3 diffuse = RECIPROCAL_PI * inputColor.rgb;
+
+				vec3 skyIrradiance;
+  				vec3 sunIrradiance = GetSunAndSkyIrradiance(worldPosition, worldNormal, sunDirection, skyIrradiance);
+
+				#if defined(SUN_LIGHT) && defined(SKY_LIGHT)
+					radiance = diffuse * (sunIrradiance + skyIrradiance);
+				#elif defined(SUN_LIGHT)
+					radiance = diffuse * sunIrradiance;
+				#elif defined(SKY_LIGHT)
+					radiance = diffuse * skyIrradiance;
+				#endif
+			#else
+				radiance = inputColor.rgb;
+			#endif
 
 			vec3 transmittance;
 			vec3 inscatter = GetSkyRadianceToPoint(
@@ -900,10 +934,10 @@ const AtmosFogShader = {
 				transmittance
 			);
 
-			inputColor.rgb *= transmittance;
-			inputColor.rgb += inscatter;
+			radiance *= transmittance;
+			radiance += inscatter;
 			
-            gl_FragColor = inputColor;
+            gl_FragColor = vec4(radiance, inputColor.a);
         }
 	`
 };
@@ -963,6 +997,7 @@ class AtmosFogEffect extends Effect {
 
 		mainPass.uniforms.tDiffuse = inputRenderTarget.texture;
 		mainPass.uniforms.depthTexture = gBuffer.output()._attachments[ATTACHMENT.DEPTH_STENCIL_ATTACHMENT];
+		mainPass.uniforms.normalTexture = gBuffer.output()._attachments[ATTACHMENT.COLOR_ATTACHMENT0];
 
 		if (finish) {
 			mainPass.material.transparent = composer._tempClearColor[3] < 1 || !composer.clearColor;

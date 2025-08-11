@@ -1,3 +1,4 @@
+import { octahedronToUnitVectorGLSL } from 't3d-effect-composer';
 import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
 import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
 import { InscatterLookup } from './chunks/InscatterLookup.js';
@@ -14,7 +15,10 @@ export const AtmosFogShader = {
 
 		TONE_MAPPING: 5,
 
-		SRGB_OUTPUT: true
+		SRGB_OUTPUT: true,
+
+		SUN_LIGHT: true,
+		SKY_LIGHT: true
 	},
 	uniforms: {
 		/* Atmosphere Uniforms */
@@ -33,12 +37,13 @@ export const AtmosFogShader = {
 
 		tDiffuse: null,
 		depthTexture: null,
+		normalTexture: null,
 
 		projectionView: new Array(16),
 		anchorMatrix: new Array(16),
 
 		ellipsoidRadii: new Array(3),
-		geometricErrorCorrectionAmount: 1.0
+		geometricErrorCorrectionAmount: 0.0
 	},
 	vertexShader: /* glsl */`
 		#define METER_TO_LENGTH_UNIT ${METER_TO_LENGTH_UNIT.toFixed(7)}
@@ -85,6 +90,7 @@ export const AtmosFogShader = {
 
 		uniform sampler2D tDiffuse;
 		uniform sampler2D depthTexture;
+		uniform sampler2D normalTexture;
 		uniform mat4 projectionView;
 		uniform mat4 anchorMatrix;
 		uniform float geometricErrorCorrectionAmount;
@@ -93,6 +99,8 @@ export const AtmosFogShader = {
 		varying vec3 vEllipsoidRadiiSquared;
 		varying vec3 vGeometryAltitudeCorrection;
 		varying vec2 v_Uv;
+
+		${octahedronToUnitVectorGLSL}
 
 		${AtmosphereCommon}
 		${TransmittanceLookup}
@@ -121,8 +129,14 @@ export const AtmosFogShader = {
 			vec4 inputColor = texture2D(tDiffuse, texCoord);
 
 			float depth = texture2D(depthTexture, texCoord).r;
+			vec4 gBufferTexel = texture2D(normalTexture, texCoord);
 
-			if (depth >= 1.0 - 1e-8) {
+			// if (depth >= 1.0 - 1e-8) {
+			// 	gl_FragColor = inputColor;
+			// 	return;
+			// }
+
+			if (gBufferTexel.r < -2.0) {
 				gl_FragColor = inputColor;
 				return;
 			}
@@ -134,9 +148,30 @@ export const AtmosFogShader = {
 			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
 
 			worldPosition = worldPosition * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
-			vec3 worldNormal = normalize(worldPosition);
+			vec3 worldNormal = octahedronToUnitVector(gBufferTexel.rg);
+			worldNormal = (anchorMatrix * vec4(worldNormal, 0.0)).xyz;
+			worldNormal = normalize(worldNormal);
 
 			correctGeometricError(worldPosition, worldNormal);
+			worldNormal = normalize(worldNormal);
+
+			vec3 radiance;
+			#if defined(SUN_LIGHT) || defined(SKY_LIGHT)
+				vec3 diffuse = RECIPROCAL_PI * inputColor.rgb;
+
+				vec3 skyIrradiance;
+  				vec3 sunIrradiance = GetSunAndSkyIrradiance(worldPosition, worldNormal, sunDirection, skyIrradiance);
+
+				#if defined(SUN_LIGHT) && defined(SKY_LIGHT)
+					radiance = diffuse * (sunIrradiance + skyIrradiance);
+				#elif defined(SUN_LIGHT)
+					radiance = diffuse * sunIrradiance;
+				#elif defined(SKY_LIGHT)
+					radiance = diffuse * skyIrradiance;
+				#endif
+			#else
+				radiance = inputColor.rgb;
+			#endif
 
 			vec3 transmittance;
 			vec3 inscatter = GetSkyRadianceToPoint(
@@ -146,10 +181,10 @@ export const AtmosFogShader = {
 				transmittance
 			);
 
-			inputColor.rgb *= transmittance;
-			inputColor.rgb += inscatter;
+			radiance *= transmittance;
+			radiance += inscatter;
 			
-            gl_FragColor = inputColor;
+            gl_FragColor = vec4(radiance, inputColor.a);
         }
 	`
 };

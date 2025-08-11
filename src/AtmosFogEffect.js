@@ -57,6 +57,7 @@ export class AtmosFogEffect extends Effect {
 
 		mainPass.uniforms.tDiffuse = inputRenderTarget.texture;
 		mainPass.uniforms.depthTexture = gBuffer.output()._attachments[ATTACHMENT.DEPTH_STENCIL_ATTACHMENT];
+		mainPass.uniforms.normalTexture = gBuffer.output()._attachments[ATTACHMENT.COLOR_ATTACHMENT0];
 
 		if (finish) {
 			mainPass.material.transparent = composer._tempClearColor[3] < 1 || !composer.clearColor;

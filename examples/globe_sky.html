@@ -60,6 +60,7 @@
 			highDynamicRange: true
 		});
 		effectComposer.sceneMSAA = true;
+		effectComposer.getBuffer('GBuffer').supportLogDepth = true;
 
 		const atmosFogEffect = new AtmosFogEffect();
 		effectComposer.addEffect('AtmosFog', atmosFogEffect, 1);
@@ -70,6 +71,7 @@
 		effectComposer.addEffect('ToneMapping', toneMappingEffect, 2);
 
 		const scene = new t3d.Scene();
+		scene.logarithmicDepthBuffer = true;
 
 		const camera = new t3d.Camera();
 		camera.setPerspective(60 / 180 * Math.PI, width / height, 1, 160000000);
@@ -306,11 +308,11 @@
 		fogFolder.addBinding(atmosFogEffect, 'active', {
 			label: 'Enable'
 		});
-		fogFolder.addBinding(atmosFogEffect._mainPass.material.uniforms, 'geometricErrorCorrectionAmount', {
-			min: 0,
-			max: 1,
-			step: 0.01,
-			label: 'Geometric Error Correction'
+		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'SUN_LIGHT').on('change', () => {
+			atmosFogEffect._mainPass.material.needsUpdate = true;
+		});
+		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'SKY_LIGHT').on('change', () => {
+			atmosFogEffect._mainPass.material.needsUpdate = true;
 		});
 
 		const toneMappingFolder = pane.addFolder({
@@ -342,6 +344,8 @@
 		const _cameraPosition = new t3d.Vector3();
 		const _sunDirection = new t3d.Vector3();
 		const _altitudeCorrection = new t3d.Vector3();
+		const _projectedScale = new t3d.Vector3();
+		const _geodetic = {};
 
 		function loop(count) {
 			requestAnimationFrame(loop);
@@ -371,6 +375,14 @@
 			_sunDirection.toArray(atmosFogEffect._mainPass.material.uniforms.sunDirection);
 			_altitudeCorrection.toArray(atmosFogEffect._mainPass.material.uniforms.altitudeCorrection);
 			tiles.ellipsoid.radius.toArray(atmosFogEffect._mainPass.material.uniforms.ellipsoidRadii);
+
+			const cameraHeight = tiles.ellipsoid.getPositionToCartographic(_cameraPosition, _geodetic).height;
+			const projectedScale = _projectedScale.set(0, Math.max(...tiles.ellipsoid.radius), -Math.max(0.0, cameraHeight))
+				.applyMatrix4(camera.projectionMatrix);
+			const geometricErrorCorrectionAmount = t3d.MathUtils.mapLinear(projectedScale.y, 41.5, 13.8, 0, 1);
+			atmosFogEffect._mainPass.material.uniforms.geometricErrorCorrectionAmount = t3d.MathUtils.clamp(geometricErrorCorrectionAmount, 0, 1);
+
+			// Set Sky Light SH
 
 			if (skyLight.visible && atmosLUTsData) {
 				_cameraPosition.add(_altitudeCorrection);
