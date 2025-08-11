@@ -451,6 +451,40 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 	return RaySphereFirstIntersection(origin, direction, vec3(0.0), radius);
 }
 
+vec2 RaySphereIntersections(const vec3 camera, const vec3 direction, const float radius) {
+	float b = 2.0 * dot(direction, camera);
+	float c = dot(camera, camera) - radius * radius;
+	float discriminant = b * b - 4.0 * c;
+	float Q = sqrt(discriminant);
+	return vec2(-b - Q, -b + Q) * 0.5;
+}
+
+bool ClipAtBottomAtmosphere(vec3 view_ray, inout vec3 camera, inout vec3 point) {
+	const float eps = 0.0;
+	float bottom_radius = atmosphere.bottom_radius + eps;
+	float r_camera = length(camera);
+	float r_point = length(point);
+	bool camera_below = r_camera < bottom_radius;
+	bool point_below = r_point < bottom_radius;
+	if (camera_below && point_below) {
+		return false;
+	}
+	vec2 t = RaySphereIntersections(camera, view_ray, bottom_radius);
+	vec3 intersection = camera + view_ray * (camera_below ? t.y : t.x);
+	if (camera_below) {
+		camera = intersection;
+	} else if (point_below) {
+		point = intersection;
+	}
+	return true;
+}
+
+vec3 ClosestPointOnRay(const vec3 camera, const vec3 point) {
+  vec3 ray = point - camera;
+  float t = clamp(-dot(camera, ray) / dot(ray, ray), 0.0, 1.0);
+  return camera + t * ray;
+}
+
 vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, out vec3 transmittance) {
 	float r = length(camera);
 	float rmu = dot(camera, view_ray);
@@ -484,11 +518,23 @@ vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, out vec3 tra
 }
 
 vec3 GetSkyRadianceToPoint(vec3 camera, vec3 point, vec3 sun_direction, out vec3 transmittance) {
+	if (length(ClosestPointOnRay(camera, point)) > atmosphere.top_radius) {
+		transmittance = vec3(1.0);
+		return vec3(0.0);
+	}
+
 	vec3 view_ray = normalize(point - camera);
+	if (!ClipAtBottomAtmosphere(view_ray, camera, point)) {
+		transmittance = vec3(1.0);
+		return vec3(0.0);
+	}
+
 	float r = length(camera);
 	float rmu = dot(camera, view_ray);
 
-	float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
+	float distance_to_top_atmosphere_boundary = -rmu - 
+		SafeSqrt(rmu * rmu - r * r + 
+		atmosphere.top_radius * atmosphere.top_radius);
 
 	// If the viewer is in space and the view ray intersects the atmosphere, move
 	// the viewer to the top atmosphere boundary (along the view ray):
@@ -501,17 +547,16 @@ vec3 GetSkyRadianceToPoint(vec3 camera, vec3 point, vec3 sun_direction, out vec3
 	float mu = rmu / r;
 	float mu_s = dot(camera, sun_direction) / r;
 	float nu = dot(view_ray, sun_direction);
-
 	float d = length(point - camera);
-
 	bool ray_r_mu_intersects_ground = RayIntersectsGround(r, mu);
 
 	// Hack to avoid rendering artifacts near the horizon, due to finite
 	// atmosphere texture resolution and finite floating point precision.
 	// See: https://github.com/ebruneton/precomputed_atmospheric_scattering/pull/32
 	if (!ray_r_mu_intersects_ground) {
-		float mu_horiz = -SafeSqrt(1.0 - atmosphere.bottom_radius / r * (atmosphere.bottom_radius / r));
-		mu = max(mu, mu_horiz + 0.004);
+		float mu_horizon = -SafeSqrt(1.0 - 
+			(atmosphere.bottom_radius * atmosphere.bottom_radius) / (r * r));
+		mu = max(mu, mu_horizon + 0.004);
 	}
 
 	transmittance = GetTransmittance(r, mu, d, ray_r_mu_intersects_ground);
