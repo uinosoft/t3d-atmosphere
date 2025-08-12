@@ -148,10 +148,10 @@ export const AtmosSkyShader = {
 
 					transmittance = vec3(0.0);
 				} else {
-					col = GetSkyRadiance(camera, view_ray, sunDirection, transmittance);
+					col = GetSkyRadiance(camera, view_ray, sunDirection, true, transmittance);
 				}
 			#else
-				col = GetSkyRadiance(camera, view_ray, sunDirection, transmittance);
+				col = GetSkyRadiance(camera, view_ray, sunDirection, true, transmittance);
 			#endif
 
 			col = ToneMapping(col);

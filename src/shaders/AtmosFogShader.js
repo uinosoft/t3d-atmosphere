@@ -144,7 +144,7 @@ export const AtmosFogShader = {
 			vec2 xy = texCoord * 2.0 - 1.0;
 			float z = depth * 2.0 - 1.0;
 			vec4 projectedPosition = vec4(xy, z, 1.0);
-			vec4 worldPosition4 = anchorMatrix * inverse(projectionView) * projectedPosition;
+			vec4 worldPosition4 = anchorMatrix * (inverse(projectionView) * projectedPosition);
 			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
 
 			worldPosition = worldPosition * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;

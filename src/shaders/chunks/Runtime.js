@@ -57,8 +57,12 @@ vec3 ClosestPointOnRay(const vec3 camera, const vec3 point) {
   return camera + t * ray;
 }
 
-vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, out vec3 transmittance) {
+vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, bool clamp_mu_at_horizon, out vec3 transmittance) {
 	float r = length(camera);
+	if (!clamp_mu_at_horizon && r < atmosphere.bottom_radius) {
+		r = atmosphere.bottom_radius;
+		camera = normalize(camera) * r;
+	}
 	float rmu = dot(camera, view_ray);
 
 	float distance_to_top_atmosphere_boundary = -rmu - sqrt(rmu * rmu - r * r + atmosphere.top_radius * atmosphere.top_radius);
@@ -73,6 +77,11 @@ vec3 GetSkyRadiance(vec3 camera, vec3 view_ray, vec3 sun_direction, out vec3 tra
 	}
 
 	float mu = rmu / r;
+	if (clamp_mu_at_horizon) {
+		float mu_horizon = -SafeSqrt(1.0 -
+			(atmosphere.bottom_radius * atmosphere.bottom_radius) / (r * r));
+		mu = max(rmu / r, mu_horizon + 0.001);
+	}
 	float mu_s = dot(camera, sun_direction) / r;
 	float nu = dot(view_ray, sun_direction);
 

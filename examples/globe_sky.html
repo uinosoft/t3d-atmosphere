@@ -381,7 +381,7 @@
 				.applyMatrix4(camera.projectionMatrix);
 			const geometricErrorCorrectionAmount = t3d.MathUtils.mapLinear(projectedScale.y, 41.5, 13.8, 0, 1);
 			atmosFogEffect._mainPass.material.uniforms.geometricErrorCorrectionAmount = t3d.MathUtils.clamp(geometricErrorCorrectionAmount, 0, 1);
-
+		
 			// Set Sky Light SH
 
 			if (skyLight.visible && atmosLUTsData) {
