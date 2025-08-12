@@ -301,18 +301,40 @@
 			label: 'Enable'
 		});
 
+		const atmosphereParams = { correctAltitude: true };
+		const atmosphereFolder = pane.addFolder({
+			title: 'Atmosphere',
+			expanded: false
+		});
+		atmosphereFolder.addBinding(atmosphereParams, 'correctAltitude', {
+			label: 'Correct Altitude'
+		});
+		atmosphereFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'CORRECT_GEOMETRIC_ERROR', {
+			label: 'Correct Geometric Error'
+		}).on('change', () => {
+			atmosFogEffect._mainPass.material.needsUpdate = true;
+		});
+
 		const fogFolder = pane.addFolder({
 			title: 'Fog Effect',
 			expanded: false
+		}).on('change', () => {
+			atmosFogEffect._mainPass.material.needsUpdate = true;
 		});
 		fogFolder.addBinding(atmosFogEffect, 'active', {
-			label: 'Enable'
+			label: 'enable'
 		});
-		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'SUN_LIGHT').on('change', () => {
-			atmosFogEffect._mainPass.material.needsUpdate = true;
+		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'SUN_LIGHT', {
+			label: 'sun'
 		});
-		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'SKY_LIGHT').on('change', () => {
-			atmosFogEffect._mainPass.material.needsUpdate = true;
+		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'SKY_LIGHT', {
+			label: 'sky'
+		});
+		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'TRANSMITTANCE', {
+			label: 'transmittance'
+		});
+		fogFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'INSCATTER', {
+			label: 'inscatter'
 		});
 
 		const toneMappingFolder = pane.addFolder({
@@ -361,7 +383,13 @@
 			// Get camera positlion, altitudeCorrection and sun direction
 		
 			_cameraPosition.copy(camera.position);
-			getAltitudeCorrectionOffset(_cameraPosition, 6360000, tiles.ellipsoid, _altitudeCorrection);
+		
+			if (atmosphereParams.correctAltitude) {
+				getAltitudeCorrectionOffset(_cameraPosition, 6360000, tiles.ellipsoid, _altitudeCorrection);
+			} else {
+				_altitudeCorrection.set(0, 0, 0);
+			}
+		
 			_sunDirection.fromArray(skyMaterial.uniforms.sunDirection);
 
 			// Set Sky Material Uniforms

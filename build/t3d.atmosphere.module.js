@@ -820,12 +820,12 @@ const AtmosFogShader = {
 		TRANSMITTANCE_MAPPING: 1,
 		INSCATTER_MAPPING: 1,
 
-		TONE_MAPPING: 5,
-
-		SRGB_OUTPUT: true,
+		CORRECT_GEOMETRIC_ERROR: true,
 
 		SUN_LIGHT: true,
-		SKY_LIGHT: true
+		SKY_LIGHT: true,
+		TRANSMITTANCE: true,
+		INSCATTER: true
 	},
 	uniforms: {
 		/* Atmosphere Uniforms */
@@ -850,7 +850,8 @@ const AtmosFogShader = {
 		anchorMatrix: new Array(16),
 
 		ellipsoidRadii: new Array(3),
-		geometricErrorCorrectionAmount: 0.0
+		geometricErrorCorrectionAmount: 0.0,
+		albedoScale: 2 / Math.PI
 	},
 	vertexShader: /* glsl */`
 		#define METER_TO_LENGTH_UNIT ${METER_TO_LENGTH_UNIT.toFixed(7)}
@@ -858,8 +859,7 @@ const AtmosFogShader = {
 		attribute vec3 a_Position;
 		attribute vec2 a_Uv;
 
-		uniform mat4 u_Projection;
-		uniform mat4 u_View;
+		uniform mat4 u_ProjectionView;
 		uniform mat4 u_Model;
 
 		uniform vec3 cameraPosition;
@@ -873,15 +873,17 @@ const AtmosFogShader = {
 		varying vec2 v_Uv;
 
 		void main() {
-			gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+			gl_Position = u_ProjectionView * u_Model * vec4(a_Position, 1.0);
 
 			vCameraPosition = (cameraPosition + altitudeCorrection) * METER_TO_LENGTH_UNIT;
-			
-			vec3 radii = ellipsoidRadii * METER_TO_LENGTH_UNIT;
-  			vEllipsoidRadiiSquared = radii * radii;
 
 			vGeometryAltitudeCorrection = altitudeCorrection * METER_TO_LENGTH_UNIT;
-			vGeometryAltitudeCorrection *= 1.0 - geometricErrorCorrectionAmount;
+			#ifdef CORRECT_GEOMETRIC_ERROR
+				vGeometryAltitudeCorrection *= 1.0 - geometricErrorCorrectionAmount;
+			#endif
+
+			vec3 radii = ellipsoidRadii * METER_TO_LENGTH_UNIT;
+  			vEllipsoidRadiiSquared = radii * radii;
 
 			v_Uv = a_Uv;
 		}
@@ -901,6 +903,7 @@ const AtmosFogShader = {
 		uniform mat4 projectionView;
 		uniform mat4 anchorMatrix;
 		uniform float geometricErrorCorrectionAmount;
+		uniform float albedoScale;
 
 		varying vec3 vCameraPosition;
 		varying vec3 vEllipsoidRadiiSquared;
@@ -914,8 +917,6 @@ const AtmosFogShader = {
 		${InscatterLookup}
 		${IrradianceLookup}
 		${Runtime}
-
-		${ToneMapping}
 
 		void correctGeometricError(inout vec3 positionECEF, inout vec3 normalECEF) {
 			// TODO: The error is pronounced at the edge of the ellipsoid due to the
@@ -931,12 +932,12 @@ const AtmosFogShader = {
 		}
 
         void main() {
-			vec2 texCoord = v_Uv;
+			vec2 uv = v_Uv;
 
-			vec4 inputColor = texture2D(tDiffuse, texCoord);
+			vec4 inputColor = texture2D(tDiffuse, uv);
 
-			float depth = texture2D(depthTexture, texCoord).r;
-			vec4 gBufferTexel = texture2D(normalTexture, texCoord);
+			float depth = texture2D(depthTexture, uv).r;
+			vec4 gBufferTexel = texture2D(normalTexture, uv);
 
 			// if (depth >= 1.0 - 1e-8) {
 			// 	gl_FragColor = inputColor;
@@ -948,24 +949,22 @@ const AtmosFogShader = {
 				return;
 			}
 
-			vec2 xy = texCoord * 2.0 - 1.0;
-			float z = depth * 2.0 - 1.0;
-			vec4 projectedPosition = vec4(xy, z, 1.0);
-			vec4 worldPosition4 = anchorMatrix * (inverse(projectionView) * projectedPosition);
-			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
+			vec4 clipPosition = vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+			vec4 worldPosition4 = anchorMatrix * (inverse(projectionView) * clipPosition);
 
+			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
 			worldPosition = worldPosition * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
 			vec3 worldNormal = octahedronToUnitVector(gBufferTexel.rg);
 			worldNormal = (anchorMatrix * vec4(worldNormal, 0.0)).xyz;
 			worldNormal = normalize(worldNormal);
 
-			correctGeometricError(worldPosition, worldNormal);
-			worldNormal = normalize(worldNormal);
+			#ifdef CORRECT_GEOMETRIC_ERROR
+				correctGeometricError(worldPosition, worldNormal);
+			#endif
 
 			vec3 radiance;
 			#if defined(SUN_LIGHT) || defined(SKY_LIGHT)
-				vec3 diffuse = RECIPROCAL_PI * inputColor.rgb;
-
+				vec3 diffuse = inputColor.rgb * albedoScale * RECIPROCAL_PI;
 				vec3 skyIrradiance;
   				vec3 sunIrradiance = GetSunAndSkyIrradiance(worldPosition, worldNormal, sunDirection, skyIrradiance);
 
@@ -980,16 +979,22 @@ const AtmosFogShader = {
 				radiance = inputColor.rgb;
 			#endif
 
-			vec3 transmittance;
-			vec3 inscatter = GetSkyRadianceToPoint(
-				vCameraPosition,
-				worldPosition,
-				sunDirection,
-				transmittance
-			);
+			#if defined(TRANSMITTANCE) || defined(INSCATTER)
+				vec3 transmittance;
+				vec3 inscatter = GetSkyRadianceToPoint(
+					vCameraPosition,
+					worldPosition,
+					sunDirection,
+					transmittance
+				);
 
-			radiance *= transmittance;
-			radiance += inscatter;
+				#ifdef TRANSMITTANCE
+					radiance *= transmittance;
+				#endif
+				#ifdef INSCATTER
+					radiance += inscatter;
+				#endif
+			#endif
 			
             gl_FragColor = vec4(radiance, inputColor.a);
         }
