@@ -1,12 +1,16 @@
-import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { InscatterCompute } from './chunks/InscatterCompute.js';
-import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
+import { definitions } from './bruneton/definitions.js';
+import { common } from './bruneton/common.js';
+import { precompute } from './bruneton/precompute.js';
+import { defines } from './helpers/defines.js';
 
 export const InscatterShader = {
 	name: 'atmos_inscatter',
-	defines: {},
+	defines: {
+		TRANSMITTANCE_MAPPING: 1,
+		INSCATTER_MAPPING: 1
+	},
 	uniforms: {
-		transmittanceTexture: null,
+		transmittance_texture: null,
 		layer: 0
 	},
 	vertexShader: /* glsl */`
@@ -24,46 +28,33 @@ export const InscatterShader = {
         }
     `,
 	fragmentShader: /* glsl */`
-        ${AtmosphereCommon}
+		${defines}
+		${definitions}
+		${common}
+		${precompute}
 
-		uniform sampler2D transmittanceTexture;
-
+		uniform AtmosphereParameters ATMOSPHERE;
+		uniform sampler2D transmittance_texture;
 		uniform float layer;
 
-        varying vec2 v_Uv;
-
-		${TransmittanceLookup}
-		${InscatterCompute} 
+		varying vec2 v_Uv;
         
         void main() {
-			vec2 uv = v_Uv;
-
-			const vec4 SCATTERING_TEXTURE_SIZE = vec4(
-				SCATTERING_TEXTURE_NU_SIZE - 1,
-				SCATTERING_TEXTURE_MU_S_SIZE,
-				SCATTERING_TEXTURE_MU_SIZE,
-				SCATTERING_TEXTURE_R_SIZE
+			vec4 deltaRayleigh;
+			vec4 deltaMie;
+			vec4 scattering;
+			vec4 singleMieScattering;
+			ComputeSingleScatteringTexture(
+				ATMOSPHERE,
+				transmittance_texture,
+				vec3(gl_FragCoord.xy, float(layer) + 0.5),
+				deltaRayleigh.rgb,
+    			deltaMie.rgb
 			);
+			deltaRayleigh.a = 1.0;
+  			deltaMie.a = 1.0;
 
-			float fragCoordNu = floor(gl_FragCoord.x / float(SCATTERING_TEXTURE_MU_S_SIZE));
-			float fragCoordMuS = mod(gl_FragCoord.x, float(SCATTERING_TEXTURE_MU_S_SIZE));
-
-			float fragCoordY = gl_FragCoord.y;
-
-			float fragCoordZ = GetTextureCoordFromUnitRange(layer, SCATTERING_TEXTURE_R_SIZE);
-
-			vec4 uvwz = vec4(fragCoordNu, fragCoordMuS, fragCoordY, fragCoordZ) / SCATTERING_TEXTURE_SIZE;
-			
-            float r, mu, muS, nu;
-			bool rayIntersectsGround;
-            GetRMuMuSNuFromScatteringUvwz(uvwz, r, mu, muS, nu, rayIntersectsGround);
-
-			vec3 ray;
-            float mie; // only calc the red channel
-            ComputeSingleScattering(r, mu, muS, nu, rayIntersectsGround, ray, mie);
-            
-            // store only red component of single Mie scattering (cf. 'Angular precision')
-            gl_FragColor = vec4(ray, mie);
+			gl_FragColor = vec4(deltaRayleigh.rgb, deltaMie.r);
         }
     `
 };

@@ -15,14 +15,16 @@ export class AtmosFogEffect extends Effect {
 	}
 
 	setLUTs(lutsData) {
-		const { transmittanceTexture, inscatterTexture, irradianceTexture } = lutsData;
+		const { atmosphere, transmittanceTexture, inscatterTexture, irradianceTexture } = lutsData;
 		const { uniforms, defines } = this._mainPass.material;
 
-		uniforms.transmittanceTexture = transmittanceTexture;
-		uniforms.inscatteringTexture = inscatterTexture;
-		uniforms.irradianceTexture = irradianceTexture;
+		uniforms.ATMOSPHERE = atmosphere.toUniform();
+		atmosphere.sunRadianceToRelativeLuminance.toArray(uniforms.SUN_SPECTRAL_RADIANCE_TO_LUMINANCE);
+		atmosphere.skyRadianceToRelativeLuminance.toArray(uniforms.SKY_SPECTRAL_RADIANCE_TO_LUMINANCE);
 
-		uniforms.atmosphere = lutsData.atmosphere.toUniform();
+		uniforms.transmittance_texture = transmittanceTexture;
+		uniforms.scattering_texture = inscatterTexture;
+		uniforms.irradiance_texture = irradianceTexture;
 
 		let needsUpdate = false;
 

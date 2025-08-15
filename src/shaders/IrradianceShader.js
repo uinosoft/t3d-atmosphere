@@ -1,14 +1,17 @@
-import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
-import { InscatterLookup } from './chunks/InscatterLookup.js';
-import { IrradianceCompute } from './chunks/IrradianceCompute.js';
+import { definitions } from './bruneton/definitions.js';
+import { common } from './bruneton/common.js';
+import { precompute } from './bruneton/precompute.js';
+import { defines } from './helpers/defines.js';
 
 export const IrradianceShader = {
 	name: 'atmos_irradiance',
+	defines: {
+		TRANSMITTANCE_MAPPING: 1,
+		INSCATTER_MAPPING: 1
+	},
 	uniforms: {
-		transmittanceTexture: null,
-		inscatteringTexture: null,
-		miePhaseFunctionG: 0.8
+		transmittance_texture: null,
+		scattering_texture: null
 	},
 	vertexShader: /* glsl */`
         attribute vec3 a_Position;
@@ -25,24 +28,25 @@ export const IrradianceShader = {
         }
     `,
 	fragmentShader: /* glsl */`
-        varying vec2 v_Uv;
+		${defines}
+		${definitions}
+		${common}
+		${precompute}
 
-        ${AtmosphereCommon}
+		uniform AtmosphereParameters ATMOSPHERE;
+		uniform sampler2D transmittance_texture;
+		uniform highp sampler3D scattering_texture;
 
-		uniform sampler2D transmittanceTexture;
-		
-		uniform highp sampler3D inscatteringTexture;
-
-		uniform float miePhaseFunctionG;
-
-		${TransmittanceLookup}
-		${InscatterLookup}
-		${IrradianceCompute}
+		varying vec2 v_Uv;
 
         void main() {
-            float r, mu_s;
-			GetRMuSFromIrradianceUv(v_Uv, r, mu_s);
-			gl_FragColor = vec4(ComputeIndirectIrradiance(r, mu_s), 1.0);
+			vec3 deltaIrradiance;
+			deltaIrradiance = ComputeIndirectIrradianceTexture(
+				ATMOSPHERE,
+				scattering_texture,
+				gl_FragCoord.xy
+			);
+			gl_FragColor = vec4(deltaIrradiance, 1.0);
         }
     `
 };

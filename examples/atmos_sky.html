@@ -171,7 +171,7 @@
 		function setSunLightColor() {
 			vector3.fromArray(skyMaterial.uniforms.sunDirection);
 			cameraPosition.fromArray(skyMaterial.uniforms.cameraPosition);
-			getSunLightColor(skyMaterial.uniforms.transmittanceTexture, cameraPosition, vector3, directionalLight.color);
+			getSunLightColor(skyMaterial.uniforms.transmittance_texture, cameraPosition, vector3, directionalLight.color);
 			directionalLight.color.convertLinearToSRGB();
 		}
 

@@ -1,8 +1,14 @@
-import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { TransmittanceCompute } from './chunks/TransmittanceCompute.js';
+import { definitions } from './bruneton/definitions.js';
+import { common } from './bruneton/common.js';
+import { precompute } from './bruneton/precompute.js';
+import { defines } from './helpers/defines.js';
 
 export const TransmittanceShader = {
 	name: 'atmos_transmittance',
+	defines: {
+		TRANSMITTANCE_MAPPING: 1,
+		INSCATTER_MAPPING: 1
+	},
 	uniforms: {},
 	vertexShader: /* glsl */`
         attribute vec3 a_Position;
@@ -19,13 +25,22 @@ export const TransmittanceShader = {
         }
     `,
 	fragmentShader: /* glsl */`
-        varying vec2 v_Uv;
+		${defines}
+		${definitions}
+		${common}
+		${precompute}
 
-        ${AtmosphereCommon}
-		${TransmittanceCompute}
+		uniform AtmosphereParameters ATMOSPHERE;
+
+		varying vec2 v_Uv;
 
         void main() {
-            gl_FragColor = vec4(ComputeTransmittance(v_Uv), 1.0);
+			vec4 transmittance;
+			transmittance.rgb = ComputeTransmittanceToTopAtmosphereBoundaryTexture(
+				ATMOSPHERE, gl_FragCoord.xy
+			);
+			transmittance.a = 1.0;
+            gl_FragColor = transmittance;
         }
     `
 };

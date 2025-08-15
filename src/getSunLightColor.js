@@ -38,7 +38,8 @@ export function getSunLightColor(
 
 	const { topRadius } = atmosphere;
 
-	const distanceToTopAtmosphereBoundary = -rmu - Math.sqrt(rmu ** 2 - r ** 2 + topRadius ** 2);
+	const distanceToTopAtmosphereBoundary =
+		-rmu - Math.sqrt(rmu ** 2 - r ** 2 + topRadius ** 2);
 
 	if (distanceToTopAtmosphereBoundary > 0) {
 		r = topRadius;

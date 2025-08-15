@@ -1,10 +1,11 @@
-import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
-import { InscatterLookup } from './chunks/InscatterLookup.js';
-import { IrradianceLookup } from './chunks/IrradianceLookup.js';
-import { ToneMapping } from './chunks/ToneMapping.js';
+import { definitions } from './bruneton/definitions.js';
+import { common } from './bruneton/common.js';
+import { runtime } from './bruneton/runtime.js';
+import { defines } from './helpers/defines.js';
+import { raySphereIntersection } from './helpers/raySphereIntersection.js';
+import { tonemapping } from './helpers/tonemapping.js';
 import { METER_TO_LENGTH_UNIT } from '../constants.js';
-import { Runtime } from './chunks/Runtime.js';
+import { AtmosParameters } from '../AtmosParameters.js';
 
 export const AtmosSkyShader = {
 	name: 'atmos_sky',
@@ -22,13 +23,17 @@ export const AtmosSkyShader = {
 	uniforms: {
 		/* Atmosphere Uniforms */
 
-		inscatteringTexture: null,
-		transmittanceTexture: null,
-		irradianceTexture: null,
+		ATMOSPHERE: AtmosParameters.DEFAULT.toUniform(),
+		SUN_SPECTRAL_RADIANCE_TO_LUMINANCE: [0, 0, 0],
+		SKY_SPECTRAL_RADIANCE_TO_LUMINANCE: [0, 0, 0],
 
-		cameraPosition: new Array(3),
-		sunDirection: new Array(3),
-		altitudeCorrection: new Array(3),
+		scattering_texture: null,
+		transmittance_texture: null,
+		irradiance_texture: null,
+
+		cameraPosition: [0, 0, 0],
+		sunDirection: [0, 0, 0],
+		altitudeCorrection: [0, 0, 0],
 
 		toneMappingExposure: 10.0,
 
@@ -91,9 +96,20 @@ export const AtmosSkyShader = {
         }
     `,
 	fragmentShader: /* glsl */`
-		uniform highp sampler3D inscatteringTexture;
-        uniform sampler2D transmittanceTexture;
-		uniform sampler2D irradianceTexture;
+		${defines}
+		${definitions}
+		${common}
+		${raySphereIntersection}
+
+		uniform AtmosphereParameters ATMOSPHERE;
+		uniform vec3 SUN_SPECTRAL_RADIANCE_TO_LUMINANCE;
+		uniform vec3 SKY_SPECTRAL_RADIANCE_TO_LUMINANCE;
+
+		uniform highp sampler3D scattering_texture;
+        uniform sampler2D transmittance_texture;
+		uniform sampler2D irradiance_texture;
+
+		${runtime}
 
         uniform float toneMappingExposure;
 
@@ -103,65 +119,72 @@ export const AtmosSkyShader = {
 		varying vec3 vCameraPosition;
 		varying vec3 vRayDirection;
 
-		${AtmosphereCommon}
-		${TransmittanceLookup}
-		${InscatterLookup}
-		${IrradianceLookup}
-		${Runtime}
-
-		${ToneMapping}
+		${tonemapping}
 
 		#include <dithering_pars_frag>
 
         void main() {
-			vec3 camera = vCameraPosition;
-            vec3 view_ray = normalize(vRayDirection);
-            float nu = dot(view_ray, sunDirection);
+			vec3 cameraPosition = vCameraPosition;
+            vec3 rayDirection = normalize(vRayDirection);
 
-			vec3 col = vec3(0.0);
-			vec3 transmittance = vec3(0.0);
+			vec4 outputColor;
+			vec3 transmittance;
 
 			#ifdef GROUND_ALBEDO
-				bool ray_r_mu_intersects_ground = RayIntersectsGround(camera, view_ray);
+				float r = length(cameraPosition);
+  				float mu = dot(cameraPosition, rayDirection) / r;
+				bool ray_r_mu_intersects_ground = RayIntersectsGround(ATMOSPHERE, r, mu);
 				if (ray_r_mu_intersects_ground) {
-					float distance_to_ground = RaySphereFirstIntersection(camera, view_ray, atmosphere.bottom_radius);
-					vec3 ground_point = view_ray * distance_to_ground + camera;
-					vec3 surface_normal = normalize(ground_point);
-
+					float distance_to_ground = RaySphereFirstIntersection(
+						cameraPosition,
+						rayDirection,
+						ATMOSPHERE.bottom_radius);
+					vec3 groundPosition = rayDirection * distance_to_ground + cameraPosition;
+					vec3 surfaceNormal = normalize(groundPosition);
 					vec3 skyIrradiance;
 					vec3 sunIrradiance = GetSunAndSkyIrradiance(
-						camera,
-						surface_normal, 
+						cameraPosition,
+						surfaceNormal, 
 						sunDirection, 
 						skyIrradiance
 					);
-
 					vec3 inscatter = GetSkyRadianceToPoint(
-						camera,
-						surface_normal * (atmosphere.bottom_radius + 1.0),
+						cameraPosition,
+						ATMOSPHERE.bottom_radius * surfaceNormal,
 						sunDirection,
 						transmittance
 					);
-
-					vec3 radiance = atmosphere.ground_albedo * RECIPROCAL_PI * (sunIrradiance + skyIrradiance);
-					col = transmittance * radiance + inscatter;
-
+					vec3 radiance = ATMOSPHERE.ground_albedo * RECIPROCAL_PI * (sunIrradiance + skyIrradiance);
+					outputColor.rgb = radiance * transmittance + inscatter;
 					transmittance = vec3(0.0);
 				} else {
-					col = GetSkyRadiance(camera, view_ray, sunDirection, true, transmittance);
+					outputColor.rgb = GetSkyRadiance(
+						cameraPosition,
+						rayDirection,
+						sunDirection,
+						transmittance
+					);
 				}
 			#else
-				col = GetSkyRadiance(camera, view_ray, sunDirection, true, transmittance);
+				outputColor.rgb = GetSkyRadiance(
+					cameraPosition,
+					rayDirection,
+					sunDirection,
+					transmittance
+				);
 			#endif
 
-			col = ToneMapping(col);
+			outputColor.rgb = ToneMapping(outputColor.rgb);
 			
             #ifdef SKY_SUNDISK
+				float nu = dot(rayDirection, sunDirection);
 				float sun = 0.004 * sunDiskSize * MiePhaseFunction(0.99, nu);
-		        col += sun * transmittance;
+		        outputColor.rgb += sun * transmittance;
             #endif
 
-            gl_FragColor = vec4(col, 1.);
+			outputColor.a = 1.0;
+
+            gl_FragColor = outputColor;
 
 			#ifdef SRGB_OUTPUT
 				gl_FragColor = LinearTosRGB(gl_FragColor);

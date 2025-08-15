@@ -1,10 +1,10 @@
 import { octahedronToUnitVectorGLSL } from 't3d-effect-composer';
-import { AtmosphereCommon } from './chunks/AtmosphereCommon.js';
-import { TransmittanceLookup } from './chunks/TransmittanceLookup.js';
-import { InscatterLookup } from './chunks/InscatterLookup.js';
-import { IrradianceLookup } from './chunks/IrradianceLookup.js';
+import { definitions } from './bruneton/definitions.js';
+import { common } from './bruneton/common.js';
+import { runtime } from './bruneton/runtime.js';
+import { defines } from './helpers/defines.js';
 import { METER_TO_LENGTH_UNIT } from '../constants.js';
-import { Runtime } from './chunks/Runtime.js';
+import { AtmosParameters } from '../AtmosParameters.js';
 
 export const AtmosFogShader = {
 	name: 'atmos_fog',
@@ -22,13 +22,17 @@ export const AtmosFogShader = {
 	uniforms: {
 		/* Atmosphere Uniforms */
 
-		inscatteringTexture: null,
-		transmittanceTexture: null,
-		irradianceTexture: null,
+		ATMOSPHERE: AtmosParameters.DEFAULT.toUniform(),
+		SUN_SPECTRAL_RADIANCE_TO_LUMINANCE: [0, 0, 0],
+		SKY_SPECTRAL_RADIANCE_TO_LUMINANCE: [0, 0, 0],
 
-		cameraPosition: new Array(3),
-		sunDirection: new Array(3),
-		altitudeCorrection: new Array(3),
+		scattering_texture: null,
+		transmittance_texture: null,
+		irradiance_texture: null,
+
+		cameraPosition: [0, 0, 0],
+		sunDirection: [0, 0, 0],
+		altitudeCorrection: [0, 0, 0],
 
 		toneMappingExposure: 10.0,
 
@@ -81,9 +85,21 @@ export const AtmosFogShader = {
 		}
 	`,
 	fragmentShader: /* glsl */`
-		uniform highp sampler3D inscatteringTexture;
-        uniform sampler2D transmittanceTexture;
-		uniform sampler2D irradianceTexture;
+		${octahedronToUnitVectorGLSL}
+
+		${defines}
+		${definitions}
+		${common}
+
+		uniform AtmosphereParameters ATMOSPHERE;
+		uniform vec3 SUN_SPECTRAL_RADIANCE_TO_LUMINANCE;
+		uniform vec3 SKY_SPECTRAL_RADIANCE_TO_LUMINANCE;
+
+		uniform highp sampler3D scattering_texture;
+        uniform sampler2D transmittance_texture;
+		uniform sampler2D irradiance_texture;
+
+		${runtime}
 
 		uniform float toneMappingExposure;
 
@@ -102,14 +118,6 @@ export const AtmosFogShader = {
 		varying vec3 vGeometryAltitudeCorrection;
 		varying vec2 v_Uv;
 
-		${octahedronToUnitVectorGLSL}
-
-		${AtmosphereCommon}
-		${TransmittanceLookup}
-		${InscatterLookup}
-		${IrradianceLookup}
-		${Runtime}
-
 		void correctGeometricError(inout vec3 positionECEF, inout vec3 normalECEF) {
 			// TODO: The error is pronounced at the edge of the ellipsoid due to the
 			// large difference between the sphere position and the unprojected position
@@ -118,7 +126,7 @@ export const AtmosFogShader = {
 
 			// Correct way is slerp, but this will be small-angle interpolation anyways.
 			vec3 sphereNormal = normalize(positionECEF / vEllipsoidRadiiSquared);
-			vec3 spherePosition = atmosphere.bottom_radius * sphereNormal;
+			vec3 spherePosition = ATMOSPHERE.bottom_radius * sphereNormal;
 			normalECEF = mix(normalECEF, sphereNormal, geometricErrorCorrectionAmount);
 			positionECEF = mix(positionECEF, spherePosition, geometricErrorCorrectionAmount);
 		}
@@ -158,7 +166,12 @@ export const AtmosFogShader = {
 			#if defined(SUN_LIGHT) || defined(SKY_LIGHT)
 				vec3 diffuse = inputColor.rgb * albedoScale * RECIPROCAL_PI;
 				vec3 skyIrradiance;
-  				vec3 sunIrradiance = GetSunAndSkyIrradiance(worldPosition, worldNormal, sunDirection, skyIrradiance);
+  				vec3 sunIrradiance = GetSunAndSkyIrradiance(
+					worldPosition,
+					worldNormal,
+					sunDirection,
+					skyIrradiance
+				);
 
 				#if defined(SUN_LIGHT) && defined(SKY_LIGHT)
 					radiance = diffuse * (sunIrradiance + skyIrradiance);

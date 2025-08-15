@@ -81,19 +81,19 @@ export class AtmosLUTsGenerator {
 		const atmosphereUniform = atmosphere.toUniform();
 
 		const transmittancePass = new ShaderPostPass(TransmittanceShader);
-		transmittancePass.uniforms.atmosphere = atmosphereUniform;
+		transmittancePass.uniforms.ATMOSPHERE = atmosphereUniform;
 		transmittancePass.material.defines.TRANSMITTANCE_MAPPING = transmittanceMapping;
 
 		const inscatterPass = new ShaderPostPass(InscatterShader);
-		inscatterPass.uniforms.transmittanceTexture = transmittanceRT.texture;
-		inscatterPass.uniforms.atmosphere = atmosphereUniform;
+		inscatterPass.uniforms.transmittance_texture = transmittanceRT.texture;
+		inscatterPass.uniforms.ATMOSPHERE = atmosphereUniform;
 		inscatterPass.material.defines.TRANSMITTANCE_MAPPING = transmittanceMapping;
 		inscatterPass.material.defines.INSCATTER_MAPPING = inscatterMapping;
 
 		const irradiancePass = new ShaderPostPass(IrradianceShader);
-		irradiancePass.uniforms.transmittanceTexture = transmittanceRT.texture;
-		irradiancePass.uniforms.inscatteringTexture = inscatterRT.texture;
-		irradiancePass.uniforms.atmosphere = atmosphereUniform;
+		irradiancePass.uniforms.transmittance_texture = transmittanceRT.texture;
+		irradiancePass.uniforms.scattering_texture = inscatterRT.texture;
+		irradiancePass.uniforms.ATMOSPHERE = atmosphereUniform;
 		irradiancePass.material.defines.TRANSMITTANCE_MAPPING = transmittanceMapping;
 		irradiancePass.material.defines.INSCATTER_MAPPING = inscatterMapping;
 
