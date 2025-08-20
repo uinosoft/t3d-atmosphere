@@ -1,5 +1,10 @@
-import { Mesh, ShaderMaterial, DRAW_SIDE, PlaneGeometry } from 't3d';
+import { Mesh, ShaderMaterial, DRAW_SIDE, PlaneGeometry, Vector3 } from 't3d';
 import { AtmosSkyShader } from './shaders/AtmosSkyShader.js';
+import { getAltitudeCorrectionOffset } from './getAltitudeCorrectionOffset.js';
+import { AtmosParameters } from './AtmosParameters.js';
+
+const vectorScratch = /* #__PURE__ */ new Vector3();
+const vectorScratch2 = /* #__PURE__ */ new Vector3();
 
 export class AtmosSky extends Mesh {
 
@@ -39,6 +44,39 @@ export class AtmosSky extends Mesh {
 		}
 
 		this.material.needsUpdate = needsUpdate;
+	}
+
+	setCamera(camera, worldToECEFMatrix, options, atmosphere = AtmosParameters.DEFAULT) {
+		const { uniforms } = this.material;
+
+		vectorScratch.setFromMatrixPosition(camera.worldMatrix);
+		vectorScratch.toArray(uniforms.cameraPosition);
+
+		worldToECEFMatrix.toArray(uniforms.worldToECEFMatrix);
+
+		if (options) {
+			const ellipsoid = options.ellipsoid;
+			const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+
+			if (correctAltitude) {
+				const cameraPositionECEF = vectorScratch
+					.applyMatrix4(worldToECEFMatrix);
+				getAltitudeCorrectionOffset(
+					cameraPositionECEF,
+					atmosphere.bottomRadius,
+					ellipsoid,
+					vectorScratch2
+				).toArray(uniforms.altitudeCorrection);
+			} else {
+				vectorScratch2
+					.set(0, 0, 0)
+					.toArray(uniforms.altitudeCorrection);
+			}
+		} else {
+			vectorScratch2
+				.set(0, 0, 0)
+				.toArray(uniforms.altitudeCorrection);
+		}
 	}
 
 }

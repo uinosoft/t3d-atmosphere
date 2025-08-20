@@ -1171,6 +1171,7 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 			irradiance_texture: null,
 			cameraPosition: [0, 0, 0],
 			sunDirection: [0, 0, 0],
+			worldToECEFMatrix: new Array(16),
 			altitudeCorrection: [0, 0, 0],
 			toneMappingExposure: 10.0,
 			/* Sky Uniforms */
@@ -1187,6 +1188,7 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 		uniform mat4 u_Model;
 
 		uniform vec3 cameraPosition;
+		uniform mat4 worldToECEFMatrix;
 		uniform vec3 altitudeCorrection;
 
 		varying vec3 vCameraPosition;
@@ -1225,8 +1227,10 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 			vec3 direction, origin;
 				getCameraRay(origin, direction);
 
-			vCameraPosition = (origin + altitudeCorrection) * METER_TO_LENGTH_UNIT;
-			vRayDirection = direction;
+			vec3 cameraPositionECEF = (worldToECEFMatrix * vec4(origin, 1.0)).xyz;
+
+			vCameraPosition = (cameraPositionECEF + altitudeCorrection) * METER_TO_LENGTH_UNIT;
+			vRayDirection = (worldToECEFMatrix * vec4(direction, 0.0)).xyz;
 
 			gl_Position = vec4(a_Position.xz, 1.0, 1.0);
 				}
@@ -1331,6 +1335,21 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 		`
 	};
 
+	const vectorScratch$2 = /* #__PURE__ */new t3d.Vector3();
+	const vectorScratch2$5 = /* #__PURE__ */new t3d.Vector3();
+	function getAltitudeCorrectionOffset(cameraPosition, bottomRadius, ellipsoid, result) {
+		const surfacePosition = ellipsoid.getPositionToSurfacePoint(cameraPosition, vectorScratch$2);
+		return surfacePosition != null ? getOsculatingSphereCenter(ellipsoid, surfacePosition, bottomRadius, result).negate() : result.setScalar(0);
+	}
+	function getOsculatingSphereCenter(ellipsoid, surfacePosition, radius, result) {
+		const a2 = ellipsoid.radius.x ** 2;
+		const b2 = ellipsoid.radius.z ** 2;
+		const normal = vectorScratch2$5.set(surfacePosition.x / a2, surfacePosition.y / a2, surfacePosition.z / b2).normalize();
+		return result.copy(normal.multiplyScalar(-radius).add(surfacePosition));
+	}
+
+	const vectorScratch$1 = /* #__PURE__ */new t3d.Vector3();
+	const vectorScratch2$4 = /* #__PURE__ */new t3d.Vector3();
 	class AtmosSky extends t3d.Mesh {
 		constructor() {
 			const material = new t3d.ShaderMaterial(AtmosSkyShader);
@@ -1368,6 +1387,26 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 			}
 			this.material.needsUpdate = needsUpdate;
 		}
+		setCamera(camera, worldToECEFMatrix, options, atmosphere = AtmosParameters.DEFAULT) {
+			const {
+				uniforms
+			} = this.material;
+			vectorScratch$1.setFromMatrixPosition(camera.worldMatrix);
+			vectorScratch$1.toArray(uniforms.cameraPosition);
+			worldToECEFMatrix.toArray(uniforms.worldToECEFMatrix);
+			if (options) {
+				const ellipsoid = options.ellipsoid;
+				const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+				if (correctAltitude) {
+					const cameraPositionECEF = vectorScratch$1.applyMatrix4(worldToECEFMatrix);
+					getAltitudeCorrectionOffset(cameraPositionECEF, atmosphere.bottomRadius, ellipsoid, vectorScratch2$4).toArray(uniforms.altitudeCorrection);
+				} else {
+					vectorScratch2$4.set(0, 0, 0).toArray(uniforms.altitudeCorrection);
+				}
+			} else {
+				vectorScratch2$4.set(0, 0, 0).toArray(uniforms.altitudeCorrection);
+			}
+		}
 	}
 
 	const AtmosFogShader = {
@@ -1392,6 +1431,7 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 			irradiance_texture: null,
 			cameraPosition: [0, 0, 0],
 			sunDirection: [0, 0, 0],
+			worldToECEFMatrix: new Array(16),
 			altitudeCorrection: [0, 0, 0],
 			toneMappingExposure: 10.0,
 			/* Fog Uniforms */
@@ -1415,6 +1455,7 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 		uniform mat4 u_Model;
 
 		uniform vec3 cameraPosition;
+		uniform mat4 worldToECEFMatrix;
 		uniform vec3 altitudeCorrection;
 		uniform vec3 ellipsoidRadii;
 		uniform float geometricErrorCorrectionAmount;
@@ -1427,7 +1468,8 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 		void main() {
 			gl_Position = u_ProjectionView * u_Model * vec4(a_Position, 1.0);
 
-			vCameraPosition = (cameraPosition + altitudeCorrection) * METER_TO_LENGTH_UNIT;
+			vec3 cameraPositionECEF = (worldToECEFMatrix * vec4(cameraPosition, 1.0)).xyz;
+			vCameraPosition = (cameraPositionECEF + altitudeCorrection) * METER_TO_LENGTH_UNIT;
 
 			vGeometryAltitudeCorrection = altitudeCorrection * METER_TO_LENGTH_UNIT;
 			#ifdef CORRECT_GEOMETRIC_ERROR
@@ -1466,6 +1508,7 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 		uniform sampler2D normalTexture;
 		uniform mat4 projectionView;
 		uniform mat4 anchorMatrix;
+		uniform mat4 worldToECEFMatrix;
 		uniform float geometricErrorCorrectionAmount;
 		uniform float albedoScale;
 
@@ -1509,13 +1552,16 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 			vec4 worldPosition4 = anchorMatrix * (inverse(projectionView) * clipPosition);
 
 			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
-			worldPosition = worldPosition * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
 			vec3 worldNormal = octahedronToUnitVector(gBufferTexel.rg);
 			worldNormal = (anchorMatrix * vec4(worldNormal, 0.0)).xyz;
 			worldNormal = normalize(worldNormal);
 
+			vec3 positionECEF = (worldToECEFMatrix * vec4(worldPosition, 1.0)).xyz;
+			positionECEF = positionECEF * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
+			vec3 normalECEF = (worldToECEFMatrix * vec4(worldNormal, 0.0)).xyz;
+
 			#ifdef CORRECT_GEOMETRIC_ERROR
-				correctGeometricError(worldPosition, worldNormal);
+				correctGeometricError(positionECEF, normalECEF);
 			#endif
 
 			vec3 radiance;
@@ -1523,8 +1569,8 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 				vec3 diffuse = inputColor.rgb * albedoScale * RECIPROCAL_PI;
 				vec3 skyIrradiance;
 					vec3 sunIrradiance = GetSunAndSkyIrradiance(
-					worldPosition,
-					worldNormal,
+					positionECEF,
+					normalECEF,
 					sunDirection,
 					skyIrradiance
 				);
@@ -1544,7 +1590,7 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 				vec3 transmittance;
 				vec3 inscatter = GetSkyRadianceToPoint(
 					vCameraPosition,
-					worldPosition,
+					positionECEF,
 					sunDirection,
 					transmittance
 				);
@@ -1562,6 +1608,9 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 	`
 	};
 
+	const vectorScratch = /* #__PURE__ */new t3d.Vector3();
+	const vectorScratch2$3 = /* #__PURE__ */new t3d.Vector3();
+	const _geodetic = {};
 	class AtmosFogEffect extends t3dEffectComposer.Effect {
 		constructor() {
 			super();
@@ -1597,6 +1646,34 @@ float RaySphereFirstIntersection(vec3 origin, vec3 direction, float radius) {
 				needsUpdate = true;
 			}
 			this._mainPass.material.needsUpdate = needsUpdate;
+		}
+		setCamera(camera, worldToECEFMatrix, options, atmosphere = AtmosParameters.DEFAULT) {
+			const {
+				uniforms
+			} = this._mainPass.material;
+			vectorScratch.setFromMatrixPosition(camera.worldMatrix);
+			vectorScratch.toArray(uniforms.cameraPosition);
+			worldToECEFMatrix.toArray(uniforms.worldToECEFMatrix);
+			if (options) {
+				const ellipsoid = options.ellipsoid;
+				const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+				const cameraPositionECEF = vectorScratch.applyMatrix4(worldToECEFMatrix);
+				if (correctAltitude) {
+					getAltitudeCorrectionOffset(cameraPositionECEF, atmosphere.bottomRadius, ellipsoid, vectorScratch2$3).toArray(uniforms.altitudeCorrection);
+				} else {
+					vectorScratch2$3.set(0, 0, 0).toArray(uniforms.altitudeCorrection);
+				}
+				ellipsoid.radius.toArray(uniforms.ellipsoidRadii);
+				const cameraHeight = ellipsoid.getPositionToCartographic(cameraPositionECEF, _geodetic).height;
+				const projectedScale = vectorScratch2$3.set(0, Math.max(...ellipsoid.radius), -Math.max(0.0, cameraHeight)).applyMatrix4(camera.projectionMatrix);
+				const geometricErrorCorrectionAmount = t3d.MathUtils.mapLinear(projectedScale.y, 41.5, 13.8, 0, 1);
+				uniforms.geometricErrorCorrectionAmount = t3d.MathUtils.clamp(geometricErrorCorrectionAmount, 0, 1);
+			} else {
+				vectorScratch2$3.set(0, 0, 0);
+				vectorScratch2$3.toArray(uniforms.altitudeCorrection);
+				vectorScratch2$3.toArray(uniforms.ellipsoidRadii);
+				uniforms.geometricErrorCorrectionAmount = 1;
+			}
 		}
 		render(renderer, composer, inputRenderTarget, outputRenderTarget, finish) {
 			const gBuffer = composer.getBuffer('GBuffer');
@@ -2521,19 +2598,6 @@ IrradianceSpectrum ComputeIndirectIrradianceTexture(
 		}
 	}
 
-	const vectorScratch = /* #__PURE__ */new t3d.Vector3();
-	const vectorScratch2$3 = /* #__PURE__ */new t3d.Vector3();
-	function getAltitudeCorrectionOffset(cameraPosition, bottomRadius, ellipsoid, result) {
-		const surfacePosition = ellipsoid.getPositionToSurfacePoint(cameraPosition, vectorScratch);
-		return surfacePosition != null ? getOsculatingSphereCenter(ellipsoid, surfacePosition, bottomRadius, result).negate() : result.setScalar(0);
-	}
-	function getOsculatingSphereCenter(ellipsoid, surfacePosition, radius, result) {
-		const a2 = ellipsoid.radius.x ** 2;
-		const b2 = ellipsoid.radius.z ** 2;
-		const normal = vectorScratch2$3.set(surfacePosition.x / a2, surfacePosition.y / a2, surfacePosition.z / b2).normalize();
-		return result.copy(normal.multiplyScalar(-radius).add(surfacePosition));
-	}
-
 	function getScatteringCoefficient(wavelengths, skyTint, atmosphereThickness, result) {
 		// Sky Tint shifts the value of Wavelengths
 		const variableRangeWavelengths = _vec3_1.set(t3d.MathUtils.lerp(wavelengths.x + 150, wavelengths.x - 150, skyTint.r), t3d.MathUtils.lerp(wavelengths.y + 150, wavelengths.y - 150, skyTint.g), t3d.MathUtils.lerp(wavelengths.z + 150, wavelengths.z - 150, skyTint.b));
@@ -2651,14 +2715,32 @@ IrradianceSpectrum ComputeIndirectIrradianceTexture(
 	const vectorScratch1$1 = /* #__PURE__ */new t3d.Vector3();
 	const vectorScratch2$1 = /* #__PURE__ */new t3d.Vector3();
 	const uvScratch$1 = /* #__PURE__ */new t3d.Vector2();
-	function getSkyLightSH(irradianceTexture, worldPosition, sunDirection, result = new t3d.SphericalHarmonics3(), ellipsoid, atmosphere = AtmosParameters.DEFAULT) {
-		const cameraPositionECEF = vectorScratch1$1.copy(worldPosition);
+	const rotationScratch = /* #__PURE__ */new t3d.Matrix3();
+	function getSkyLightSH(irradianceTexture, worldPosition, sunDirection, worldToECEFMatrix, result = new t3d.SphericalHarmonics3(), options, atmosphere = AtmosParameters.DEFAULT) {
+		const ecefToWorldRotation = rotationScratch.setFromMatrix4(worldToECEFMatrix).transpose();
+		const cameraPosition = vectorScratch1$1.copy(worldPosition);
+		const cameraPositionECEF = cameraPosition.applyMatrix4(worldToECEFMatrix);
+		if (options) {
+			const ellipsoid = options.ellipsoid;
+			const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+			if (correctAltitude) {
+				const surfacePosition = ellipsoid.getPositionToSurfacePoint(cameraPositionECEF, vectorScratch2$1);
+				if (surfacePosition != null) {
+					cameraPositionECEF.add(getAltitudeCorrectionOffset(cameraPositionECEF, atmosphere.bottomRadius, ellipsoid, vectorScratch2$1));
+				}
+			}
+		}
 		const r = cameraPositionECEF.getLength();
 		const muS = cameraPositionECEF.dot(sunDirection) / r;
 		const uv = getUvFromRMuS(atmosphere, r, muS, uvScratch$1);
 		const irradiance = sampleTexture(irradianceTexture, uv, vectorScratch2$1);
 		irradiance.multiply(atmosphere.skyRadianceToRelativeLuminance);
-		const normal = ellipsoid.getPositionToNormal(cameraPositionECEF, vectorScratch1$1);
+		const normal = vectorScratch1$1;
+		if (options) {
+			options.ellipsoid.getPositionToNormal(cameraPositionECEF, normal).applyMatrix3(ecefToWorldRotation);
+		} else {
+			normal.set(0, 1, 0);
+		}
 		const coefficients = result.coefficients;
 		coefficients[0].copy(irradiance).multiplyScalar(L0_COEFF);
 		coefficients[1].copy(irradiance).multiplyScalar(L1_COEFF * normal.y);
@@ -2683,8 +2765,19 @@ IrradianceSpectrum ComputeIndirectIrradianceTexture(
 	const vectorScratch1 = /* #__PURE__ */new t3d.Vector3();
 	const vectorScratch2 = /* #__PURE__ */new t3d.Vector3();
 	const uvScratch = /* #__PURE__ */new t3d.Vector2();
-	function getSunLightColor(transmittanceTexture, worldPosition, sunDirection, target = new t3d.Color3(), atmosphere = AtmosParameters.DEFAULT) {
-		const camera = vectorScratch1.copy(worldPosition);
+	function getSunLightColor(transmittanceTexture, cameraPosition, sunDirection, worldToECEFMatrix, target = new t3d.Color3(), options, atmosphere = AtmosParameters.DEFAULT) {
+		const cameraPositionECEF = vectorScratch1.copy(cameraPosition).applyMatrix4(worldToECEFMatrix);
+		if (options) {
+			const ellipsoid = options.ellipsoid;
+			const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+			if (correctAltitude) {
+				const surfacePosition = ellipsoid.getPositionToSurfacePoint(cameraPositionECEF, vectorScratch2);
+				if (surfacePosition != null) {
+					cameraPositionECEF.add(getAltitudeCorrectionOffset(cameraPositionECEF, atmosphere.bottomRadius, ellipsoid, vectorScratch2));
+				}
+			}
+		}
+		const camera = cameraPositionECEF;
 		const transmittance = vectorScratch2;
 		let r = camera.getLength();
 		let rmu = camera.dot(sunDirection);

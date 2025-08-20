@@ -31,7 +31,7 @@
 		import * as t3d from 't3d';
 		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, getSunLightColor } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, getSunLightColor, getSkyLightSH } from 't3d-atmosphere';
 		import { Pane } from 'tweakpane';
 
 		let width = window.innerWidth || 2;
@@ -110,10 +110,11 @@
 				atmosLUTsGenerator.computeIrradiance(forwardRenderer);
 				console.timeEnd('compute irradiance');
 
-				// get transmittance pixels for sun light color calculation
 				console.time('read transmittance pixels');
 				atmosLUTsGenerator.readTransmittancePixels(forwardRenderer);
 				console.timeEnd('read transmittance pixels');
+
+				atmosLUTsGenerator.readIrradiancePixels(forwardRenderer);
 
 				return atmosLUTsGenerator.data;
 			} else {
@@ -137,13 +138,17 @@
 			}
 		}
 
-		// sky and sun
+		// sky and lights
 
 		const sky = new AtmosSky();
 		scene.add(sky);
 
 		const skyMaterial = sky.material;
 		skyMaterial.uniforms.cameraPosition = [0, 400 + 6360000, 0];
+
+		const skyLight = new t3d.SphericalHarmonicsLight();
+		skyLight.intensity = 2;
+		scene.add(skyLight);
 
 		const directionalLight = new t3d.DirectionalLight(0xffffff, 0.6);
 		directionalLight.position.set(-10, 20, 30);
@@ -165,14 +170,30 @@
 			directionalLight.lookAt(new t3d.Vector3(), new t3d.Vector3(0, 1, 0));
 
 			vector3.normalize();
+			vector3.transformDirection(worldToECEFMatrix);
 			vector3.toArray(skyMaterial.uniforms.sunDirection);
 		}
 
 		function setSunLightColor() {
 			vector3.fromArray(skyMaterial.uniforms.sunDirection);
 			cameraPosition.fromArray(skyMaterial.uniforms.cameraPosition);
-			getSunLightColor(skyMaterial.uniforms.transmittance_texture, cameraPosition, vector3, directionalLight.color);
+		
+			getSunLightColor(
+				skyMaterial.uniforms.transmittance_texture,
+				cameraPosition,
+				vector3,
+				worldToECEFMatrix,
+				directionalLight.color
+			);
 			directionalLight.color.convertLinearToSRGB();
+
+			getSkyLightSH(
+				skyMaterial.uniforms.irradiance_texture,
+				cameraPosition,
+				vector3,
+				worldToECEFMatrix,
+				skyLight.sh
+			);
 		}
 
 		getLUTsData().then(lutsData => {
@@ -226,7 +247,6 @@
 			label: 'Fixed Altitude'
 		}).on('change', ({ value }) => {
 			if (value) {
-				skyMaterial.uniforms.cameraPosition = [0, altitudeParams.cameraHeight + 6360000, 0];
 				setSunLightColor();
 			}
 			altitudeControl.disabled = !value;
@@ -236,9 +256,6 @@
 			max: 70000,
 			label: 'Altitude'
 		}).on('change', ({ value }) => {
-			if (altitudeParams.fixedAltitude) {
-				skyMaterial.uniforms.cameraPosition = [0, value + 6360000, 0];
-			}
 			setSunLightColor();
 		});
 
@@ -316,18 +333,34 @@
 
 		//
 
+		const worldToECEFMatrix = new t3d.Matrix4();
+		worldToECEFMatrix.set(
+			1, 0, 0, 0,
+			0, 0, 1, 0,
+			0, -1, 0, 0,
+			0, 0, 0, 1
+		);
+
 		function loop(count) {
 			requestAnimationFrame(loop);
 
 			controller.update();
 
-			if (!altitudeParams.fixedAltitude) {
-				skyMaterial.uniforms.cameraPosition = [
-					0,
-					Math.max(1.0, camera.position.y + 6360000),
-					0
-				];
+			if (altitudeParams.fixedAltitude) {
+				worldToECEFMatrix.setPosition(
+					-camera.position.x,
+					-camera.position.z,
+					camera.position.y + (-6360000 - altitudeParams.cameraHeight)
+				);
+			} else {
+				worldToECEFMatrix.setPosition(
+					-camera.position.x,
+					-camera.position.z,
+					-6360000
+				);
 			}
+
+			sky.setCamera(camera, worldToECEFMatrix);
 
 			forwardRenderer.render(scene, camera);
 		}

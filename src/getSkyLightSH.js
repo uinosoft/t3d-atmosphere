@@ -1,7 +1,8 @@
-import { Vector2, Vector3, SphericalHarmonics3 } from 't3d';
+import { Vector2, Vector3, Matrix3, SphericalHarmonics3 } from 't3d';
 import { getTextureCoordFromUnitRange } from './helpers/functions.js';
 import { IRRADIANCE_TEXTURE_WIDTH, IRRADIANCE_TEXTURE_HEIGHT } from './constants.js';
 import { sampleTexture } from './helpers/sampleTexture.js';
+import { getAltitudeCorrectionOffset } from './getAltitudeCorrectionOffset.js';
 import { AtmosParameters } from './AtmosParameters.js';
 
 function getUvFromRMuS(atmosphere, r, muS, result) {
@@ -25,16 +26,45 @@ const L1_COEFF = Math.sqrt(3) / (2 * Math.sqrt(Math.PI));
 const vectorScratch1 = /* #__PURE__ */ new Vector3();
 const vectorScratch2 = /* #__PURE__ */ new Vector3();
 const uvScratch = /* #__PURE__ */ new Vector2();
+const rotationScratch = /* #__PURE__ */ new Matrix3();
 
 export function getSkyLightSH(
 	irradianceTexture,
 	worldPosition,
 	sunDirection,
+	worldToECEFMatrix,
 	result = new SphericalHarmonics3(),
-	ellipsoid,
+	options,
 	atmosphere = AtmosParameters.DEFAULT
 ) {
-	const cameraPositionECEF = vectorScratch1.copy(worldPosition);
+	const ecefToWorldRotation = rotationScratch
+		.setFromMatrix4(worldToECEFMatrix)
+		.transpose();
+
+	const cameraPosition = vectorScratch1.copy(worldPosition);
+	const cameraPositionECEF = cameraPosition.applyMatrix4(worldToECEFMatrix);
+
+	if (options) {
+		const ellipsoid = options.ellipsoid;
+		const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+
+		if (correctAltitude) {
+			const surfacePosition = ellipsoid.getPositionToSurfacePoint(
+				cameraPositionECEF,
+        	vectorScratch2
+			);
+			if (surfacePosition != null) {
+				cameraPositionECEF.add(
+					getAltitudeCorrectionOffset(
+						cameraPositionECEF,
+						atmosphere.bottomRadius,
+						ellipsoid,
+						vectorScratch2
+					)
+				);
+			}
+		}
+	}
 
 	const r = cameraPositionECEF.getLength();
 	const muS = cameraPositionECEF.dot(sunDirection) / r;
@@ -42,10 +72,16 @@ export function getSkyLightSH(
 	const irradiance = sampleTexture(irradianceTexture, uv, vectorScratch2);
 	irradiance.multiply(atmosphere.skyRadianceToRelativeLuminance);
 
-	const normal = ellipsoid
-		.getPositionToNormal(cameraPositionECEF, vectorScratch1);
-	const coefficients = result.coefficients;
+	const normal = vectorScratch1;
+	if (options) {
+		options.ellipsoid
+			.getPositionToNormal(cameraPositionECEF, normal)
+			.applyMatrix3(ecefToWorldRotation);
+	} else {
+		normal.set(0, 1, 0);
+	}
 
+	const coefficients = result.coefficients;
 	coefficients[0].copy(irradiance).multiplyScalar(L0_COEFF);
 	coefficients[1].copy(irradiance).multiplyScalar(L1_COEFF * normal.y);
 	coefficients[2].copy(irradiance).multiplyScalar(L1_COEFF * normal.z);

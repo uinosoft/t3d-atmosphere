@@ -32,6 +32,7 @@ export const AtmosFogShader = {
 
 		cameraPosition: [0, 0, 0],
 		sunDirection: [0, 0, 0],
+		worldToECEFMatrix: new Array(16),
 		altitudeCorrection: [0, 0, 0],
 
 		toneMappingExposure: 10.0,
@@ -59,6 +60,7 @@ export const AtmosFogShader = {
 		uniform mat4 u_Model;
 
 		uniform vec3 cameraPosition;
+		uniform mat4 worldToECEFMatrix;
 		uniform vec3 altitudeCorrection;
 		uniform vec3 ellipsoidRadii;
 		uniform float geometricErrorCorrectionAmount;
@@ -71,7 +73,8 @@ export const AtmosFogShader = {
 		void main() {
 			gl_Position = u_ProjectionView * u_Model * vec4(a_Position, 1.0);
 
-			vCameraPosition = (cameraPosition + altitudeCorrection) * METER_TO_LENGTH_UNIT;
+			vec3 cameraPositionECEF = (worldToECEFMatrix * vec4(cameraPosition, 1.0)).xyz;
+			vCameraPosition = (cameraPositionECEF + altitudeCorrection) * METER_TO_LENGTH_UNIT;
 
 			vGeometryAltitudeCorrection = altitudeCorrection * METER_TO_LENGTH_UNIT;
 			#ifdef CORRECT_GEOMETRIC_ERROR
@@ -110,6 +113,7 @@ export const AtmosFogShader = {
 		uniform sampler2D normalTexture;
 		uniform mat4 projectionView;
 		uniform mat4 anchorMatrix;
+		uniform mat4 worldToECEFMatrix;
 		uniform float geometricErrorCorrectionAmount;
 		uniform float albedoScale;
 
@@ -153,13 +157,16 @@ export const AtmosFogShader = {
 			vec4 worldPosition4 = anchorMatrix * (inverse(projectionView) * clipPosition);
 
 			vec3 worldPosition = worldPosition4.xyz / worldPosition4.w;
-			worldPosition = worldPosition * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
 			vec3 worldNormal = octahedronToUnitVector(gBufferTexel.rg);
 			worldNormal = (anchorMatrix * vec4(worldNormal, 0.0)).xyz;
 			worldNormal = normalize(worldNormal);
 
+			vec3 positionECEF = (worldToECEFMatrix * vec4(worldPosition, 1.0)).xyz;
+			positionECEF = positionECEF * METER_TO_LENGTH_UNIT + vGeometryAltitudeCorrection;
+			vec3 normalECEF = (worldToECEFMatrix * vec4(worldNormal, 0.0)).xyz;
+
 			#ifdef CORRECT_GEOMETRIC_ERROR
-				correctGeometricError(worldPosition, worldNormal);
+				correctGeometricError(positionECEF, normalECEF);
 			#endif
 
 			vec3 radiance;
@@ -167,8 +174,8 @@ export const AtmosFogShader = {
 				vec3 diffuse = inputColor.rgb * albedoScale * RECIPROCAL_PI;
 				vec3 skyIrradiance;
   				vec3 sunIrradiance = GetSunAndSkyIrradiance(
-					worldPosition,
-					worldNormal,
+					positionECEF,
+					normalECEF,
 					sunDirection,
 					skyIrradiance
 				);
@@ -188,7 +195,7 @@ export const AtmosFogShader = {
 				vec3 transmittance;
 				vec3 inscatter = GetSkyRadianceToPoint(
 					vCameraPosition,
-					worldPosition,
+					positionECEF,
 					sunDirection,
 					transmittance
 				);

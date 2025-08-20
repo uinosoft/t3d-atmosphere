@@ -33,6 +33,7 @@ export const AtmosSkyShader = {
 
 		cameraPosition: [0, 0, 0],
 		sunDirection: [0, 0, 0],
+		worldToECEFMatrix: new Array(16),
 		altitudeCorrection: [0, 0, 0],
 
 		toneMappingExposure: 10.0,
@@ -51,6 +52,7 @@ export const AtmosSkyShader = {
 		uniform mat4 u_Model;
 
 		uniform vec3 cameraPosition;
+		uniform mat4 worldToECEFMatrix;
 		uniform vec3 altitudeCorrection;
 
 		varying vec3 vCameraPosition;
@@ -89,8 +91,10 @@ export const AtmosSkyShader = {
 			vec3 direction, origin;
   			getCameraRay(origin, direction);
 
-			vCameraPosition = (origin + altitudeCorrection) * METER_TO_LENGTH_UNIT;
-			vRayDirection = direction;
+			vec3 cameraPositionECEF = (worldToECEFMatrix * vec4(origin, 1.0)).xyz;
+
+			vCameraPosition = (cameraPositionECEF + altitudeCorrection) * METER_TO_LENGTH_UNIT;
+			vRayDirection = (worldToECEFMatrix * vec4(direction, 0.0)).xyz;
 
 			gl_Position = vec4(a_Position.xz, 1.0, 1.0);
         }

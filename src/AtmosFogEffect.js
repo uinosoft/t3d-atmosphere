@@ -1,6 +1,12 @@
-import { ShaderPostPass, ATTACHMENT } from 't3d';
+import { ShaderPostPass, ATTACHMENT, Vector3, MathUtils } from 't3d';
 import { Effect } from 't3d-effect-composer';
 import { AtmosFogShader } from './shaders/AtmosFogShader.js';
+import { getAltitudeCorrectionOffset } from './getAltitudeCorrectionOffset.js';
+import { AtmosParameters } from './AtmosParameters.js';
+
+const vectorScratch = /* #__PURE__ */ new Vector3();
+const vectorScratch2 = /* #__PURE__ */ new Vector3();
+const _geodetic = {};
 
 export class AtmosFogEffect extends Effect {
 
@@ -39,6 +45,49 @@ export class AtmosFogEffect extends Effect {
 		}
 
 		this._mainPass.material.needsUpdate = needsUpdate;
+	}
+
+	setCamera(camera, worldToECEFMatrix, options, atmosphere = AtmosParameters.DEFAULT) {
+		const { uniforms } = this._mainPass.material;
+
+		vectorScratch.setFromMatrixPosition(camera.worldMatrix);
+		vectorScratch.toArray(uniforms.cameraPosition);
+
+		worldToECEFMatrix.toArray(uniforms.worldToECEFMatrix);
+
+		if (options) {
+			const ellipsoid = options.ellipsoid;
+			const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+
+			const cameraPositionECEF = vectorScratch
+				.applyMatrix4(worldToECEFMatrix);
+
+			if (correctAltitude) {
+				getAltitudeCorrectionOffset(
+					cameraPositionECEF,
+					atmosphere.bottomRadius,
+					ellipsoid,
+					vectorScratch2
+				).toArray(uniforms.altitudeCorrection);
+			} else {
+				vectorScratch2
+					.set(0, 0, 0)
+					.toArray(uniforms.altitudeCorrection);
+			}
+
+			ellipsoid.radius.toArray(uniforms.ellipsoidRadii);
+
+			const cameraHeight = ellipsoid.getPositionToCartographic(cameraPositionECEF, _geodetic).height;
+			const projectedScale = vectorScratch2.set(0, Math.max(...ellipsoid.radius), -Math.max(0.0, cameraHeight))
+				.applyMatrix4(camera.projectionMatrix);
+			const geometricErrorCorrectionAmount = MathUtils.mapLinear(projectedScale.y, 41.5, 13.8, 0, 1);
+			uniforms.geometricErrorCorrectionAmount = MathUtils.clamp(geometricErrorCorrectionAmount, 0, 1);
+		} else {
+			vectorScratch2.set(0, 0, 0);
+			vectorScratch2.toArray(uniforms.altitudeCorrection);
+			vectorScratch2.toArray(uniforms.ellipsoidRadii);
+			uniforms.geometricErrorCorrectionAmount = 1;
+		}
 	}
 
 	render(renderer, composer, inputRenderTarget, outputRenderTarget, finish) {

@@ -8,7 +8,7 @@
 </head>
 <body>
     <div id="info">
-        <a href="" target="_blank">t3d-atmosphere</a> - globe sky (WIP)
+        <a href="" target="_blank">t3d-atmosphere</a> - globe sky
     </div>
 
 	<!-- Import maps polyfill -->
@@ -33,7 +33,7 @@
 		import { DRACOLoader } from 't3d/addons/loaders/DRACOLoader.js';
 		import { DefaultEffectComposer, ToneMappingEffect, ToneMappingType } from 't3d-effect-composer';
 		import { TilesRenderer, CesiumIonAuthPlugin, ReorientationPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosFogEffect, getAltitudeCorrectionOffset, getSkyLightSH } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosFogEffect } from 't3d-atmosphere';
 		import ionAccessToken from './ionAccessToken.js';
 		import { Pane } from 'tweakpane';
 
@@ -63,12 +63,14 @@
 		effectComposer.getBuffer('GBuffer').supportLogDepth = true;
 
 		const atmosFogEffect = new AtmosFogEffect();
-		effectComposer.addEffect('AtmosFog', atmosFogEffect, 1);
+		effectComposer.addEffect('AtmosFog', atmosFogEffect, 20);
 
 		const toneMappingEffect = new ToneMappingEffect();
 		toneMappingEffect.toneMapping = ToneMappingType.AgX;
 		toneMappingEffect.toneMappingExposure = 3.0;
-		effectComposer.addEffect('ToneMapping', toneMappingEffect, 2);
+		effectComposer.addEffect('ToneMapping', toneMappingEffect, 21);
+
+		const fxaaEffect = effectComposer.getEffect('FXAA');
 
 		const scene = new t3d.Scene();
 		scene.logarithmicDepthBuffer = true;
@@ -132,19 +134,8 @@
 				atmosLUTsGenerator.computeIrradiance(renderer);
 				console.timeEnd('compute irradiance');
 
-				// get transmittance pixels for sun light color calculation
 				console.time('read transmittance pixels');
-				const transmittanceRT = atmosLUTsGenerator._transmittanceRT;
-				const { width, height } = transmittanceRT;
-				const data = transmittanceRT.texture.type === t3d.PIXEL_TYPE.FLOAT ?
-					new Float32Array(width * height * 4) :
-					new Uint16Array(width * height * 4);
-				renderer.setRenderTarget(transmittanceRT);
-				renderer.readRenderTargetPixels(
-					0, 0, width, height,
-					data
-				);
-				transmittanceRT.texture.image.data = data;
+				atmosLUTsGenerator.readTransmittancePixels(renderer);
 				console.timeEnd('read transmittance pixels');
 
 				atmosLUTsGenerator.readIrradiancePixels(renderer);
@@ -173,7 +164,7 @@
 			return atmosLUTsData;
 		}
 
-		// sky and sun
+		// sky
 
 		const sky = new AtmosSky();
 		scene.add(sky);
@@ -184,37 +175,18 @@
 		skyMaterial.defines.GROUND_ALBEDO = false;
 		skyMaterial.uniforms.toneMappingExposure = 1.0;
 
-		const skyLight = new t3d.SphericalHarmonicsLight();
-		scene.add(skyLight);
-
-		const directionalLight = new t3d.DirectionalLight(0xffffff, 1.8);
-		directionalLight.position.set(-10, 20, 30);
-		directionalLight.castShadow = true;
-		directionalLight.shadow.windowSize = 3;
-		scene.add(directionalLight);
+		// main
 
 		const sunAngles = { x: -23, y: 17 };
-		const spherical = new t3d.Spherical(50, 0, 0);
-		const vector3 = new t3d.Vector3();
 
-		function setSunLightDirection() {
-			spherical.phi = Math.PI / 2 - sunAngles.y * Math.PI / 180;
-			spherical.theta = Math.PI - sunAngles.x * Math.PI / 180;
-			vector3.setFromSpherical(spherical);
-
-			directionalLight.position.copy(vector3);
-			directionalLight.lookAt(new t3d.Vector3(), new t3d.Vector3(0, 1, 0));
-
-			vector3.normalize();
-			vector3.toArray(skyMaterial.uniforms.sunDirection);
-		}
-
-		function setSunLightColor() {}
+		const correctOptions = {
+			ellipsoid: tiles.ellipsoid,
+			correctAltitude: true
+		};
 
 		getLUTsData().then(lutsData => {
 			sky.setLUTs(lutsData);
 			atmosFogEffect.setLUTs(lutsData);
-			setSunLightDirection();
 		});
 
 		// gui
@@ -279,9 +251,6 @@
 			label: 'Angles',
 			expanded: true,
 			picker: 'inline'
-		}).on('change', () => {
-			setSunLightDirection();
-			setSunLightColor();
 		});
 		sunFolder.addBinding(skyMaterial.defines, 'SKY_SUNDISK', {
 			label: 'Disk'
@@ -293,20 +262,11 @@
 			label: 'Disk Size'
 		});
 
-		const skyLightFolder = pane.addFolder({
-			title: 'Sky Light',
-			expanded: false
-		});
-		skyLightFolder.addBinding(skyLight, 'visible', {
-			label: 'Enable'
-		});
-
-		const atmosphereParams = { correctAltitude: true };
 		const atmosphereFolder = pane.addFolder({
 			title: 'Atmosphere',
 			expanded: false
 		});
-		atmosphereFolder.addBinding(atmosphereParams, 'correctAltitude', {
+		atmosphereFolder.addBinding(correctOptions, 'correctAltitude', {
 			label: 'Correct Altitude'
 		});
 		atmosphereFolder.addBinding(atmosFogEffect._mainPass.material.defines, 'CORRECT_GEOMETRIC_ERROR', {
@@ -360,14 +320,24 @@
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
 		});
+		otherFolder.addBinding(fxaaEffect, 'active', {
+			label: 'FXAA'
+		});
 
 		//
 
-		const _cameraPosition = new t3d.Vector3();
-		const _sunDirection = new t3d.Vector3();
-		const _altitudeCorrection = new t3d.Vector3();
-		const _projectedScale = new t3d.Vector3();
-		const _geodetic = {};
+		const worldToECEFMatrix = tiles.group.matrix;
+		const sunDirection = new t3d.Vector3();
+		const spherical = new t3d.Spherical(10, 0, 0);
+
+		function setSunLightDirection(target) {
+			spherical.phi = Math.PI / 2 - sunAngles.y * Math.PI / 180;
+			spherical.theta = Math.PI - sunAngles.x * Math.PI / 180;
+			target.setFromSpherical(spherical);
+
+			target.normalize();
+			target.transformDirection(worldToECEFMatrix);
+		}
 
 		function loop(count) {
 			requestAnimationFrame(loop);
@@ -375,49 +345,18 @@
 			controller.update();
 
 			camera.updateMatrix();
-
-			scene.anchorMatrix.copy(camera.worldMatrix);
 		
 			tiles.update();
 
-			// Get camera positlion, altitudeCorrection and sun direction
-		
-			_cameraPosition.copy(camera.position);
-		
-			if (atmosphereParams.correctAltitude) {
-				getAltitudeCorrectionOffset(_cameraPosition, 6360000, tiles.ellipsoid, _altitudeCorrection);
-			} else {
-				_altitudeCorrection.set(0, 0, 0);
-			}
-		
-			_sunDirection.fromArray(skyMaterial.uniforms.sunDirection);
+			setSunLightDirection(sunDirection);
 
-			// Set Sky Material Uniforms
-		
-			_cameraPosition.toArray(skyMaterial.uniforms.cameraPosition);
-			_altitudeCorrection.toArray(skyMaterial.uniforms.altitudeCorrection);
+			sky.setCamera(camera, worldToECEFMatrix, correctOptions);
+			atmosFogEffect.setCamera(camera, worldToECEFMatrix, correctOptions);
 
-			// Set Atmos Fog Effect Uniforms
+			sunDirection.toArray(skyMaterial.uniforms.sunDirection);
+			sunDirection.toArray(atmosFogEffect._mainPass.material.uniforms.sunDirection);
 
-			_cameraPosition.toArray(atmosFogEffect._mainPass.material.uniforms.cameraPosition);
-			_sunDirection.toArray(atmosFogEffect._mainPass.material.uniforms.sunDirection);
-			_altitudeCorrection.toArray(atmosFogEffect._mainPass.material.uniforms.altitudeCorrection);
-			tiles.ellipsoid.radius.toArray(atmosFogEffect._mainPass.material.uniforms.ellipsoidRadii);
-
-			const cameraHeight = tiles.ellipsoid.getPositionToCartographic(_cameraPosition, _geodetic).height;
-			const projectedScale = _projectedScale.set(0, Math.max(...tiles.ellipsoid.radius), -Math.max(0.0, cameraHeight))
-				.applyMatrix4(camera.projectionMatrix);
-			const geometricErrorCorrectionAmount = t3d.MathUtils.mapLinear(projectedScale.y, 41.5, 13.8, 0, 1);
-			atmosFogEffect._mainPass.material.uniforms.geometricErrorCorrectionAmount = t3d.MathUtils.clamp(geometricErrorCorrectionAmount, 0, 1);
-		
-			// Set Sky Light SH
-
-			if (skyLight.visible && atmosLUTsData) {
-				_cameraPosition.add(_altitudeCorrection);
-				_cameraPosition.normalize().multiplyScalar(6360000 + 1);
-				getSkyLightSH(atmosLUTsData.irradianceTexture, _cameraPosition, _sunDirection, skyLight.sh, tiles.ellipsoid);
-			}
-
+			scene.anchorMatrix.copy(camera.worldMatrix);
 			scene.updateMatrix();
 			scene.updateRenderStates(camera);
 			scene.updateRenderQueue(camera);

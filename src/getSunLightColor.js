@@ -3,6 +3,7 @@ import { AtmosParameters } from './AtmosParameters.js';
 import { TRANSMITTANCE_TEXTURE_WIDTH, TRANSMITTANCE_TEXTURE_HEIGHT } from './constants.js';
 import { safeSqrt, rayIntersectsGround, distanceToTopAtmosphereBoundary, getTextureCoordFromUnitRange } from './helpers/functions.js';
 import { sampleTexture } from './helpers/sampleTexture.js';
+import { getAltitudeCorrectionOffset } from './getAltitudeCorrectionOffset.js';
 
 function getUvFromRMu(atmosphere, r, mu, result) {
 	const { topRadius, bottomRadius } = atmosphere;
@@ -25,12 +26,39 @@ const uvScratch = /* #__PURE__ */ new Vector2();
 
 export function getSunLightColor(
 	transmittanceTexture,
-	worldPosition,
+	cameraPosition,
 	sunDirection,
+	worldToECEFMatrix,
 	target = new Color3(),
+	options,
 	atmosphere = AtmosParameters.DEFAULT
 ) {
-	const camera = vectorScratch1.copy(worldPosition);
+	const cameraPositionECEF = vectorScratch1.copy(cameraPosition)
+		.applyMatrix4(worldToECEFMatrix);
+
+	if (options) {
+		const ellipsoid = options.ellipsoid;
+		const correctAltitude = options.correctAltitude !== undefined ? options.correctAltitude : true;
+
+		if (correctAltitude) {
+			const surfacePosition = ellipsoid.getPositionToSurfacePoint(
+				cameraPositionECEF,
+				vectorScratch2
+			);
+			if (surfacePosition != null) {
+				cameraPositionECEF.add(
+					getAltitudeCorrectionOffset(
+						cameraPositionECEF,
+						atmosphere.bottomRadius,
+						ellipsoid,
+						vectorScratch2
+					)
+				);
+			}
+		}
+	}
+
+	const camera = cameraPositionECEF;
 	const transmittance = vectorScratch2;
 
 	let r = camera.getLength();
