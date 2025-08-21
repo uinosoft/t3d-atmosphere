@@ -59,7 +59,7 @@
 			webgl2: renderer.capabilities.version > 1,
 			highDynamicRange: true
 		});
-		effectComposer.sceneMSAA = true;
+		effectComposer.sceneMSAA = false;
 		effectComposer.getBuffer('GBuffer').supportLogDepth = true;
 
 		const atmosFogEffect = new AtmosFogEffect();
@@ -67,13 +67,14 @@
 
 		const toneMappingEffect = new ToneMappingEffect();
 		toneMappingEffect.toneMapping = ToneMappingType.AgX;
-		toneMappingEffect.toneMappingExposure = 3.0;
+		toneMappingEffect.toneMappingExposure = 5.0;
 		effectComposer.addEffect('ToneMapping', toneMappingEffect, 21);
 
 		const fxaaEffect = effectComposer.getEffect('FXAA');
+		fxaaEffect.active = true;
 
 		const scene = new t3d.Scene();
-		scene.logarithmicDepthBuffer = true;
+		// scene.logarithmicDepthBuffer = true;
 
 		const camera = new t3d.Camera();
 		camera.setPerspective(60 / 180 * Math.PI, width / height, 1, 160000000);
@@ -172,8 +173,9 @@
 		const skyMaterial = sky.material;
 		skyMaterial.defines.TONE_MAPPING = -1;
 		skyMaterial.defines.SRGB_OUTPUT = false;
-		skyMaterial.defines.GROUND_ALBEDO = false;
+		skyMaterial.defines.GROUND_ALBEDO = true;
 		skyMaterial.uniforms.toneMappingExposure = 1.0;
+		skyMaterial.dithering = false;
 
 		// main
 
