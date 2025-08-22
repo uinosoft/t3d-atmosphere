@@ -4,10 +4,11 @@
     "private": true,
     "description": "Examples for t3d-atmosphere library",
     "dependencies": {
+        "astronomy-engine": "^2.1.19",
         "es-module-shims": "^2.5.1",
         "t3d": "^0.4.3",
-        "t3d-effect-composer": "^0.3.3",
         "t3d-3dtiles": "^0.3.0",
+        "t3d-effect-composer": "^0.3.3",
         "tweakpane": "^4.0.5"
     }
 }

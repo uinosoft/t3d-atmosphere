@@ -23,7 +23,8 @@
 				"t3d-effect-composer": "./node_modules/t3d-effect-composer/build/t3d.effectcomposer.module.js",
 				"t3d-3dtiles": "./node_modules/t3d-3dtiles/build/t3d.3dtiles.module.js",
 				"t3d-atmosphere": "../build/t3d.atmosphere.module.js",
-				"tweakpane": "./node_modules/tweakpane/dist/tweakpane.js"
+				"tweakpane": "./node_modules/tweakpane/dist/tweakpane.js",
+				"astronomy-engine": "./node_modules/astronomy-engine/esm/astronomy.js"
             }
         }
     </script>
@@ -34,6 +35,8 @@
 		import { DefaultEffectComposer, ToneMappingEffect, ToneMappingType } from 't3d-effect-composer';
 		import { TilesRenderer, CesiumIonAuthPlugin, ReorientationPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
 		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosFogEffect } from 't3d-atmosphere';
+		import { AvailableTimeZones, getTimeZoneOffset } from './jsm/timeZone.js';
+		import { getSunDirectionECEF } from './jsm/celestialDirections.js';
 		import ionAccessToken from './ionAccessToken.js';
 		import { Pane } from 'tweakpane';
 
@@ -78,7 +81,7 @@
 
 		const camera = new t3d.Camera();
 		camera.setPerspective(60 / 180 * Math.PI, width / height, 1, 160000000);
-		camera.position.set(0, 0, -15000000);
+		camera.position.set(0, 0, 15000000);
 		camera.lookAt(new t3d.Vector3(0, 0, 0), new t3d.Vector3(0, 1, 0));
 		scene.add(camera);
 
@@ -97,6 +100,14 @@
 		tiles.registerPlugin(new GLTFExtensionsPlugin({
 			dracoLoader: new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.3/')
 		}));
+
+		// tiles.addEventListener('load-tile-set', () => {
+		// 	tiles.group.euler.set(
+		// 		-Math.PI / 2,
+		// 		0,
+		// 		0
+		// 	);
+		// });
 
 		tiles.addCamera(camera);
 		tiles.setResolution(width, height);
@@ -179,7 +190,24 @@
 
 		// main
 
-		const sunAngles = { x: -23, y: 17 };
+		const timeParams = {
+			zone: '+08:00',
+			day: 180, // summer
+			minutes: 8 * 60 + 30 // 08:30
+		};
+		const sunDirection = new t3d.Vector3();
+
+		function calculateSunDirection() {
+			const timestamp = Date.UTC(2025, 0, 1, 0, 0, 0, 0)
+				+ (timeParams.day - 1) * 24 * 60 * 60 * 1000
+				+ timeParams.minutes * 60 * 1000
+				+ getTimeZoneOffset(timeParams.zone);
+			;
+			getSunDirectionECEF(new Date(timestamp), sunDirection);
+			// console.log(new Date(timestamp).toISOString());
+		}
+
+		calculateSunDirection();
 
 		const correctOptions = {
 			ellipsoid: tiles.ellipsoid,
@@ -244,15 +272,38 @@
 			label: 'Show Earth'
 		});
 
-		const sunFolder = pane.addFolder({
-			title: 'Sun'
+		const timeFolder = pane.addFolder({
+			title: 'Time',
+			expanded: true
+		}).on('change', calculateSunDirection);
+		timeFolder.addBinding(timeParams, 'zone', {
+			label: 'Zone',
+			options: AvailableTimeZones.reduce((obj, v) => {
+				obj[v] = v;
+				return obj;
+			}, {})
 		});
-		sunFolder.addBinding({ sunAngles }, 'sunAngles', {
-			x: { min: -180, max: 180 },
-			y: { min: -90, max: 90, inverted: true },
-			label: 'Angles',
-			expanded: true,
-			picker: 'inline'
+		timeFolder.addBinding(timeParams, 'day', {
+			min: 1,
+			max: 365,
+			step: 1,
+			label: 'Day'
+		});
+		timeFolder.addBinding(timeParams, 'minutes', {
+			min: 0,
+			max: 24 * 60 - 1,
+			step: 1,
+			label: 'Time',
+			format: v => {
+				const h = Math.floor(v / 60).toString().padStart(2, '0');
+				const m = (v % 60).toString().padStart(2, '0');
+				return `${h}:${m}`;
+			}
+		});
+
+		const sunFolder = pane.addFolder({
+			title: 'Sun',
+			expanded: false
 		});
 		sunFolder.addBinding(skyMaterial.defines, 'SKY_SUNDISK', {
 			label: 'Disk'
@@ -328,18 +379,13 @@
 
 		//
 
-		const worldToECEFMatrix = tiles.group.matrix;
-		const sunDirection = new t3d.Vector3();
-		const spherical = new t3d.Spherical(10, 0, 0);
-
-		function setSunLightDirection(target) {
-			spherical.phi = Math.PI / 2 - sunAngles.y * Math.PI / 180;
-			spherical.theta = Math.PI - sunAngles.x * Math.PI / 180;
-			target.setFromSpherical(spherical);
-
-			target.normalize();
-			target.transformDirection(worldToECEFMatrix);
-		}
+		// TODO
+		const worldToECEFMatrix = new t3d.Matrix4().set(
+			0, 1, 0, 0,
+			0, 0, 1, 0,
+			1, 0, 0, 0,
+			0, 0, 0, 1
+		).transpose();
 
 		function loop(count) {
 			requestAnimationFrame(loop);
@@ -349,8 +395,6 @@
 			camera.updateMatrix();
 		
 			tiles.update();
-
-			setSunLightDirection(sunDirection);
 
 			sky.setCamera(camera, worldToECEFMatrix, correctOptions);
 			atmosFogEffect.setCamera(camera, worldToECEFMatrix, correctOptions);
