@@ -33,7 +33,7 @@
 		import * as t3d from 't3d';
 		import { DRACOLoader } from 't3d/addons/loaders/DRACOLoader.js';
 		import { DefaultEffectComposer, ToneMappingEffect, ToneMappingType } from 't3d-effect-composer';
-		import { TilesRenderer, CesiumIonAuthPlugin, ReorientationPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
+		import { TilesRenderer, CesiumIonAuthPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
 		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosFogEffect } from 't3d-atmosphere';
 		import { AvailableTimeZones, getTimeZoneOffset } from './jsm/timeZone.js';
 		import { getSunDirectionECEF } from './jsm/celestialDirections.js';
@@ -96,18 +96,18 @@
 			assetId: '2275207',
 			autoRefreshToken: true
 		}));
-		tiles.registerPlugin(new ReorientationPlugin());
 		tiles.registerPlugin(new GLTFExtensionsPlugin({
 			dracoLoader: new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.3/')
 		}));
-
-		// tiles.addEventListener('load-tile-set', () => {
-		// 	tiles.group.euler.set(
-		// 		-Math.PI / 2,
-		// 		0,
-		// 		0
-		// 	);
-		// });
+		// tiles.registerPlugin(new ReorientationPlugin());
+		tiles.addEventListener('load-tile-set', () => {
+			tiles.group.euler.set(
+				-Math.PI / 2,
+				0,
+				-Math.PI
+			);
+			tiles.group.updateMatrix();
+		});
 
 		tiles.addCamera(camera);
 		tiles.setResolution(width, height);
@@ -201,10 +201,9 @@
 			const timestamp = Date.UTC(2025, 0, 1, 0, 0, 0, 0)
 				+ (timeParams.day - 1) * 24 * 60 * 60 * 1000
 				+ timeParams.minutes * 60 * 1000
-				+ getTimeZoneOffset(timeParams.zone);
+				- getTimeZoneOffset(timeParams.zone);
 			;
 			getSunDirectionECEF(new Date(timestamp), sunDirection);
-			// console.log(new Date(timestamp).toISOString());
 		}
 
 		calculateSunDirection();
@@ -379,13 +378,12 @@
 
 		//
 
-		// TODO
 		const worldToECEFMatrix = new t3d.Matrix4().set(
-			0, 1, 0, 0,
+			-1, 0, 0, 0,
 			0, 0, 1, 0,
-			1, 0, 0, 0,
+			0, 1, 0, 0,
 			0, 0, 0, 1
-		).transpose();
+		);
 
 		function loop(count) {
 			requestAnimationFrame(loop);

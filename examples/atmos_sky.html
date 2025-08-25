@@ -333,9 +333,7 @@
 
 		//
 
-		// TODO
-		const worldToECEFMatrix = new t3d.Matrix4();
-		worldToECEFMatrix.set(
+		const worldToECEFMatrix = new t3d.Matrix4().set(
 			1, 0, 0, 0,
 			0, 0, 1, 0,
 			0, -1, 0, 0,
@@ -346,6 +344,8 @@
 			requestAnimationFrame(loop);
 
 			controller.update();
+
+			camera.updateMatrix();
 
 			if (altitudeParams.fixedAltitude) {
 				worldToECEFMatrix.setPosition(
