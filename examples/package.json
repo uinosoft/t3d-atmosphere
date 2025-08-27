@@ -8,7 +8,7 @@
         "es-module-shims": "^2.5.1",
         "t3d": "^0.4.3",
         "t3d-3dtiles": "^0.3.0",
-        "t3d-effect-composer": "^0.3.3",
+        "t3d-effect-composer": "^0.3.4",
         "tweakpane": "^4.0.5"
     }
 }

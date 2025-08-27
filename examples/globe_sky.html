@@ -77,7 +77,7 @@
 		fxaaEffect.active = true;
 
 		const scene = new t3d.Scene();
-		// scene.logarithmicDepthBuffer = true;
+		scene.logarithmicDepthBuffer = true;
 
 		const camera = new t3d.Camera();
 		camera.setPerspective(60 / 180 * Math.PI, width / height, 1, 160000000);
