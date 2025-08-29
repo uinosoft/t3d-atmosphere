@@ -27,25 +27,14 @@
 import {
 	AstroTime,
 	Body,
-	CombineRotation,
 	GeoVector,
+	Pivot,
 	Rotation_EQJ_EQD,
-	RotationMatrix,
 	SiderealTime
 } from 'astronomy-engine';
 import { Matrix4, Vector3 } from 't3d';
 
 const matrixScratch = /* #__PURE__ */ new Matrix4();
-
-function RotationZ(angle) {
-	const cos = Math.cos(angle);
-	const sin = Math.sin(angle);
-	return new RotationMatrix([
-		[cos, -sin, 0],
-		[sin, cos, 0],
-		[0, 0, 1]
-	]);
-}
 
 // Prefer number to be JS timestamp.
 function makeTime(value) {
@@ -59,14 +48,12 @@ export function getECIToECEFRotationMatrix(
 	result = new Matrix4()
 ) {
 	const time = makeTime(date);
-	const rotationEQJtoEQD = Rotation_EQJ_EQD(time);
-	const rotationEQDtoECEF = RotationZ(SiderealTime(time) * (-Math.PI / 12));
-	const { rot } = CombineRotation(rotationEQJtoEQD, rotationEQDtoECEF);
+	const { rot } = Pivot(Rotation_EQJ_EQD(time), 2, -15 * SiderealTime(time));
 	// prettier-ignore
 	return result.set(
-		rot[0][0], rot[0][1], rot[0][2], 0,
-		rot[1][0], rot[1][1], rot[1][2], 0,
-		rot[2][0], rot[2][1], rot[2][2], 0,
+		rot[0][0], rot[1][0], rot[2][0], 0,
+		rot[0][1], rot[1][1], rot[2][1], 0,
+		rot[0][2], rot[1][2], rot[2][2], 0,
 		0, 0, 0, 1
 	);
 }
