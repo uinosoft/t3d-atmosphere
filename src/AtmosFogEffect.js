@@ -32,6 +32,8 @@ export class AtmosFogEffect extends Effect {
 		uniforms.scattering_texture = inscatterTexture;
 		uniforms.irradiance_texture = irradianceTexture;
 
+		uniforms.bottomRadius = atmosphere.bottomRadius;
+
 		let needsUpdate = false;
 
 		if (defines.TRANSMITTANCE_MAPPING !== lutsData.transmittanceMapping) {

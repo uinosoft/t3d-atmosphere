@@ -199,11 +199,12 @@ bool ClipAtBottomAtmosphere(
 	return true;
 }
 
+
 RadianceSpectrum GetSkyRadianceToPoint(
 	const AtmosphereParameters atmosphere,
 	const TransmittanceTexture transmittance_texture,
 	const highp ReducedScatteringTexture scattering_texture,
-	Position camera, Position point,
+	Position camera, Position point, 
 	const Direction sun_direction, out DimensionlessSpectrum transmittance) {
 	// @shotamatsuda: Avoid artifacts when the ray does not intersect the top
 	// atmosphere boundary.
@@ -348,7 +349,39 @@ Illuminance3 GetSunAndSkyIlluminance(
 	return sun_irradiance * SUN_SPECTRAL_RADIANCE_TO_LUMINANCE;
 }
 
+// @shotamatsuda: Added for the clouds.
+IrradianceSpectrum GetSunAndSkyScalarIrradiance(
+	const AtmosphereParameters atmosphere,
+	const TransmittanceTexture transmittance_texture,
+	const IrradianceTexture irradiance_texture,
+	const Position point, const Direction sun_direction,
+	out IrradianceSpectrum sky_irradiance) {
+	Length r = length(point);
+	Number mu_s = dot(point, sun_direction) / r;
+
+	// Indirect irradiance. Integral over sphere yields 2π.
+	sky_irradiance = GetIrradiance(atmosphere, irradiance_texture, r, mu_s) *
+		2.0 * PI;
+
+	// Direct irradiance. Omit the cosine term.
+	return atmosphere.solar_irradiance *
+		GetTransmittanceToSun(atmosphere, transmittance_texture, r, mu_s);
+}
+
+
+// @shotamatsuda: Added for the clouds.
+Illuminance3 GetSunAndSkyScalarIlluminance(
+	const Position p, const Direction sun_direction,
+	out IrradianceSpectrum sky_irradiance) {
+	IrradianceSpectrum sun_irradiance = GetSunAndSkyScalarIrradiance(
+		ATMOSPHERE, transmittance_texture, irradiance_texture, p,
+		sun_direction, sky_irradiance);
+	sky_irradiance *= SKY_SPECTRAL_RADIANCE_TO_LUMINANCE;
+	return sun_irradiance * SUN_SPECTRAL_RADIANCE_TO_LUMINANCE;
+}
+
 #define GetSkyRadiance GetSkyLuminance
 #define GetSkyRadianceToPoint GetSkyLuminanceToPoint
 #define GetSunAndSkyIrradiance GetSunAndSkyIlluminance
+#define GetSunAndSkyScalarIrradiance GetSunAndSkyScalarIlluminance
 `;

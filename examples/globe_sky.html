@@ -32,9 +32,10 @@
     <script type="module">
 		import * as t3d from 't3d';
 		import { DRACOLoader } from 't3d/addons/loaders/DRACOLoader.js';
+		import { Texture2DLoader } from 't3d/addons/loaders/Texture2DLoader.js';
 		import { DefaultEffectComposer, ToneMappingEffect, ToneMappingType } from 't3d-effect-composer';
 		import { TilesRenderer, CesiumIonAuthPlugin, GLTFExtensionsPlugin, GlobeControls } from 't3d-3dtiles';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosFogEffect } from 't3d-atmosphere';
+		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, AtmosFogEffect, AtmosCloudEffect } from 't3d-atmosphere';
 		import { AvailableTimeZones, getTimeZoneOffset } from './jsm/timeZone.js';
 		import { getSunDirectionECEF } from './jsm/celestialDirections.js';
 		import ionAccessToken from './ionAccessToken.js';
@@ -64,9 +65,6 @@
 		});
 		effectComposer.sceneMSAA = false;
 		effectComposer.getBuffer('GBuffer').supportLogDepth = true;
-
-		const atmosFogEffect = new AtmosFogEffect();
-		effectComposer.addEffect('AtmosFog', atmosFogEffect, 20);
 
 		const toneMappingEffect = new ToneMappingEffect();
 		toneMappingEffect.toneMapping = ToneMappingType.AgX;
@@ -188,6 +186,58 @@
 		skyMaterial.uniforms.toneMappingExposure = 1.0;
 		skyMaterial.dithering = false;
 
+		// fog
+
+		const atmosFogEffect = new AtmosFogEffect();
+		effectComposer.addEffect('AtmosFog', atmosFogEffect, 20);
+
+		// clouds
+
+		const texture2DLoader = new Texture2DLoader();
+		async function loadTexture2D(uri) {
+			const texture = await texture2DLoader.loadAsync(uri);
+			texture.wrapS = texture.wrapT = t3d.TEXTURE_WRAP.REPEAT;
+			return texture;
+		}
+		
+		const fileLoader = new t3d.FileLoader();
+		fileLoader.setResponseType('arraybuffer');
+		async function loadTexture3D(uri, width, height, depth) {
+			const arrayBuffer = await fileLoader.loadAsync(uri);
+			const texture = new t3d.Texture3D();
+			texture.magFilter = texture.minFilter = t3d.TEXTURE_FILTER.LINEAR;
+			texture.wrapS = texture.wrapT = texture.wrapR = t3d.TEXTURE_WRAP.REPEAT;
+			texture.format = t3d.PIXEL_FORMAT.RED;
+			texture.image = {
+				data: new Uint8Array(arrayBuffer),
+				width: width,
+				height: height,
+				depth: depth
+			};
+			texture.version++;
+			return texture;
+		}
+
+		const cloudEffect = new AtmosCloudEffect();
+		cloudEffect._cloudPass.material.defines.TONE_MAPPING = -1;
+		cloudEffect._cloudPass.uniforms.toneMappingExposure = 1.0;
+
+		Promise.all([
+			loadTexture2D('./assets/local_weather.png'),
+			loadTexture2D('./assets/turbulence.png'),
+			loadTexture3D('./assets/shape_detail.bin', 32, 32, 32),
+			loadTexture3D('./assets/stbn.bin', 128, 128, 64),
+			loadTexture3D('./assets/shape.bin', 128, 128, 128)
+		]).then(([localWeatherTexture, turbulenceTexture, shapeDetailTexture, stbnTexture, shapeTexture]) => {
+			cloudEffect.localWeatherTexture = localWeatherTexture;
+			cloudEffect.turbulenceTexture = turbulenceTexture;
+			cloudEffect.shapeDetailTexture = shapeDetailTexture;
+			cloudEffect.stbnTexture = stbnTexture;
+			cloudEffect.shapeTexture = shapeTexture;
+
+			effectComposer.addEffect('Cloud', cloudEffect, 20.5);
+		});
+
 		// main
 
 		const timeParams = {
@@ -216,6 +266,7 @@
 		getLUTsData().then(lutsData => {
 			sky.setLUTs(lutsData);
 			atmosFogEffect.setLUTs(lutsData);
+			cloudEffect.setLUTs(lutsData);
 		});
 
 		// gui
@@ -238,6 +289,7 @@
 			const lutsData = await getLUTsData();
 			sky.setLUTs(lutsData);
 			atmosFogEffect.setLUTs(lutsData);
+			cloudEffect.setLUTs(lutsData);
 		
 			pane.disabled = false;
 			precomputeFolder.disabled = value === 'loader';
@@ -248,6 +300,7 @@
 			const lutsData = await getLUTsData();
 			sky.setLUTs(lutsData);
 			atmosFogEffect.setLUTs(lutsData);
+			cloudEffect.setLUTs(lutsData);
 		});
 		precomputeFolder.addBinding(precomputeOptions, 'transmittanceMapping', {
 			label: 'Transmittance Mapping',
@@ -349,6 +402,52 @@
 			label: 'inscatter'
 		});
 
+		const cloudsFolder = pane.addFolder({
+			title: 'Clouds Effect',
+			expanded: false
+		});
+		cloudsFolder.addBinding(cloudEffect, 'active', {
+			label: 'enable'
+		});
+		cloudsFolder.addBinding(cloudEffect, 'jitter', {
+			label: 'jitter'
+		});
+		cloudsFolder.addBinding(cloudEffect, 'animation', {
+			label: 'animation'
+		});
+		cloudsFolder.addBinding(cloudEffect, 'animationSpeed', {
+			x: { min: -0.0001, max: 0.0001, step: 0.00001 },
+    		y: { min: -0.0001, max: 0.0001, step: 0.00001 },
+			label: 'animation speed'
+		});
+		cloudsFolder.addBinding(cloudEffect, 'downsample', {
+			min: 0,
+			max: 4,
+			step: 1,
+			label: 'downsample'
+		});
+		cloudsFolder.addBinding(cloudEffect._cloudPass.uniforms, 'coverage', {
+			min: 0,
+			max: 1,
+			step: 0.01,
+			label: 'coverage'
+		});
+		cloudsFolder.addBinding(cloudEffect._cloudPass.material.defines, 'SHAPE_DETAIL', {
+			label: 'shape detail'
+		}).on('change', () => {
+			cloudEffect._cloudPass.material.needsUpdate = true;
+		});
+		cloudsFolder.addBinding(cloudEffect._cloudPass.material.defines, 'TURBULENCE', {
+			label: 'turbulence'
+		}).on('change', () => {
+			cloudEffect._cloudPass.material.needsUpdate = true;
+		});
+		cloudsFolder.addBinding(cloudEffect._cloudPass.material.defines, 'HAZE', {
+			label: 'haze'
+		}).on('change', () => {
+			cloudEffect._cloudPass.material.needsUpdate = true;
+		});
+
 		const toneMappingFolder = pane.addFolder({
 			title: 'Tone Mapping',
 			expanded: false
@@ -396,9 +495,11 @@
 
 			sky.setCamera(camera, worldToECEFMatrix, correctOptions);
 			atmosFogEffect.setCamera(camera, worldToECEFMatrix, correctOptions);
+			cloudEffect.setCamera(camera, worldToECEFMatrix, correctOptions);
 
 			sunDirection.toArray(skyMaterial.uniforms.sunDirection);
 			sunDirection.toArray(atmosFogEffect._mainPass.material.uniforms.sunDirection);
+			sunDirection.toArray(cloudEffect._cloudPass.material.uniforms.sunDirection);
 
 			scene.anchorMatrix.copy(camera.worldMatrix);
 			scene.updateMatrix();

@@ -1,5 +1,6 @@
 export { AtmosSky } from './AtmosSky.js';
 export { AtmosFogEffect } from './AtmosFogEffect.js';
+export { AtmosCloudEffect } from './AtmosCloudEffect.js';
 export { AtmosLUTsGenerator } from './AtmosLUTsGenerator.js';
 export { AtmosLUTsLoader } from './AtmosLUTsLoader.js';
 export { getAltitudeCorrectionOffset } from './getAltitudeCorrectionOffset.js';
