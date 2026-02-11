@@ -44,8 +44,8 @@
     "rollup": "^4.9.1"
   },
   "peerDependencies": {
-    "t3d": "^0.4.0",
-    "t3d-effect-composer": "^0.3.0"
+    "t3d": "^0.5.0",
+    "t3d-effect-composer": "^0.4.0"
   },
   "scripts": {
     "dev": "rollup -c -w",
@@ -54,6 +54,6 @@
     "lint-fix": "eslint src --fix",
     "lint-examples": "eslint \"examples/**/*.html\"",
     "lint-examples-fix": "eslint \"examples/**/*.html\" --fix",
-    "install-examples": "cd examples && npm install && cd .."
+    "install-examples": "cd examples && npm install --legacy-peer-deps && cd .."
   }
 }

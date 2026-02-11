@@ -8,7 +8,7 @@
         "es-module-shims": "^2.5.1",
         "t3d": "^0.5.0",
         "t3d-3dtiles": "^0.3.0",
-        "t3d-effect-composer": "github:uinosoft/t3d-effect-composer#7771545a3b293dd7beda4a40c2a13a9cbda83387",
+        "t3d-effect-composer": "^0.4.0",
         "tweakpane": "^4.0.5"
     }
 }
