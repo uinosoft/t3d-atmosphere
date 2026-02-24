@@ -29,9 +29,10 @@
 
     <script type="module">
 		import * as t3d from 't3d';
-		import { ForwardRenderer } from 't3d/addons/render/ForwardRenderer.js';
 		import { OrbitControls } from 't3d/addons/controls/OrbitControls.js';
-		import { AtmosLUTsGenerator, AtmosLUTsLoader, AtmosSky, getSunLightColor, getSkyLightSH } from 't3d-atmosphere';
+		import { DefaultEffectComposer } from 't3d-effect-composer';
+		import { Texture2DLoader } from 't3d/addons/loaders/Texture2DLoader.js';
+		import { AtmosLUTsGenerator, AtmosCloudEffect, AtmosLUTsLoader, AtmosSky, getSunLightColor, getSkyLightSH } from 't3d-atmosphere';
 		import { Pane } from 'tweakpane';
 
 		let width = window.innerWidth || 2;
@@ -45,8 +46,72 @@
 		canvas.height = height;
 		container.appendChild(canvas);
 
-		const forwardRenderer = new ForwardRenderer(canvas, { antialias: true, alpha: true });
-		forwardRenderer.setClearColor(0, 0, 0, 0);
+		const gl = canvas.getContext('webgl2');
+		const renderer = new t3d.WebGLRenderer(gl);
+		renderer.setClearColor(0, 0, 0, 0);
+
+		const backRenderTarget = new t3d.RenderTargetBack(canvas);
+
+		const shadowMapPass = new t3d.ShadowMapPass();
+
+		const effectComposer = new DefaultEffectComposer(width, height, {
+			samplerNumber: Math.min(renderer.capabilities.maxSamples, 5),
+			webgl2: renderer.capabilities.version > 1,
+			highDynamicRange: true
+		});
+		effectComposer.sceneMSAA = false;
+		effectComposer.getBuffer('GBuffer').setIfRenderReplaceFunction(function normalIfRenderFunction(renderable) {
+			if (renderable.object.material.shaderName === 'atmos_sky') {
+				return false;
+			}
+			return true;
+		});
+		
+		// clouds
+
+		const texture2DLoader = new Texture2DLoader();
+		async function loadTexture2D(uri) {
+			const texture = await texture2DLoader.loadAsync(uri);
+			texture.wrapS = texture.wrapT = t3d.TEXTURE_WRAP.REPEAT;
+			return texture;
+		}
+		
+		const fileLoader = new t3d.FileLoader();
+		fileLoader.setResponseType('arraybuffer');
+		async function loadTexture3D(uri, width, height, depth) {
+			const arrayBuffer = await fileLoader.loadAsync(uri);
+			const texture = new t3d.Texture3D();
+			texture.magFilter = texture.minFilter = t3d.TEXTURE_FILTER.LINEAR;
+			texture.wrapS = texture.wrapT = texture.wrapR = t3d.TEXTURE_WRAP.REPEAT;
+			texture.format = t3d.PIXEL_FORMAT.RED;
+			texture.image = {
+				data: new Uint8Array(arrayBuffer),
+				width: width,
+				height: height,
+				depth: depth
+			};
+			texture.version++;
+			return texture;
+		}
+
+		const cloudEffect = new AtmosCloudEffect();
+		cloudEffect._cloudPass.material.defines.TONE_MAPPING = 5;
+		cloudEffect._cloudPass.uniforms.toneMappingExposure = 10.0;
+		Promise.all([
+			loadTexture2D('./assets/local_weather.png'),
+			loadTexture2D('./assets/turbulence.png'),
+			loadTexture3D('./assets/shape_detail.bin', 32, 32, 32),
+			loadTexture3D('./assets/stbn.bin', 128, 128, 64),
+			loadTexture3D('./assets/shape.bin', 128, 128, 128)
+		]).then(([localWeatherTexture, turbulenceTexture, shapeDetailTexture, stbnTexture, shapeTexture]) => {
+			cloudEffect.localWeatherTexture = localWeatherTexture;
+			cloudEffect.turbulenceTexture = turbulenceTexture;
+			cloudEffect.shapeDetailTexture = shapeDetailTexture;
+			cloudEffect.stbnTexture = stbnTexture;
+			cloudEffect.shapeTexture = shapeTexture;
+
+			effectComposer.addEffect('Cloud', cloudEffect, 20.5);
+		});
 
 		const scene = new t3d.Scene();
 
@@ -96,30 +161,30 @@
 			}
 
 			if (precomputeOptions.source === 'generator') {
-				atmosLUTsGenerator = new AtmosLUTsGenerator(forwardRenderer.capabilities, precomputeOptions);
+				atmosLUTsGenerator = new AtmosLUTsGenerator(renderer.capabilities, precomputeOptions);
 
 				console.time('compute transmittance');
-				atmosLUTsGenerator.computeTransmittance(forwardRenderer);
+				atmosLUTsGenerator.computeTransmittance(renderer);
 				console.timeEnd('compute transmittance');
 
 				console.time('compute inscatter');
-				atmosLUTsGenerator.computeInscatter(forwardRenderer);
+				atmosLUTsGenerator.computeInscatter(renderer);
 				console.timeEnd('compute inscatter');
 
 				console.time('compute irradiance');
-				atmosLUTsGenerator.computeIrradiance(forwardRenderer);
+				atmosLUTsGenerator.computeIrradiance(renderer);
 				console.timeEnd('compute irradiance');
 
 				console.time('read transmittance pixels');
-				atmosLUTsGenerator.readTransmittancePixels(forwardRenderer);
+				atmosLUTsGenerator.readTransmittancePixels(renderer);
 				console.timeEnd('read transmittance pixels');
 
-				atmosLUTsGenerator.readIrradiancePixels(forwardRenderer);
+				atmosLUTsGenerator.readIrradiancePixels(renderer);
 
 				return atmosLUTsGenerator.data;
 			} else {
 				if (!atmosLUTsLoader) {
-					atmosLUTsLoader = new AtmosLUTsLoader(forwardRenderer.capabilities);
+					atmosLUTsLoader = new AtmosLUTsLoader(renderer.capabilities);
 
 					console.time('load transmittance');
 					await atmosLUTsLoader.loadTransmittanceTexture('./assets/transmittance.bin');
@@ -176,6 +241,8 @@
 
 		function setSunLightColor() {
 			vector3.fromArray(skyMaterial.uniforms.sunDirection);
+			vector3.toArray(cloudEffect._cloudPass.material.uniforms.sunDirection);
+
 			cameraPosition.fromArray(skyMaterial.uniforms.cameraPosition);
 		
 			getSunLightColor(
@@ -198,6 +265,7 @@
 
 		getLUTsData().then(lutsData => {
 			sky.setLUTs(lutsData);
+			cloudEffect.setLUTs(lutsData);
 			setSunLightDirection();
 			setSunLightColor();
 		});
@@ -219,6 +287,7 @@
 		}).on('change', async ({ value }) => {
 			pane.disabled = true;
 			sky.setLUTs(await getLUTsData());
+			cloudEffect.setLUTs(await getLUTsData());
 			pane.disabled = false;
 			precomputeFolder.disabled = value === 'loader';
 		});
@@ -226,6 +295,7 @@
 			title: 'Generator Options'
 		}).on('change', async () => {
 			sky.setLUTs(await getLUTsData());
+			cloudEffect.setLUTs(await getLUTsData());
 		});
 		precomputeFolder.addBinding(precomputeOptions, 'transmittanceMapping', {
 			label: 'Transmittance Mapping',
@@ -309,11 +379,15 @@
 			}
 		}).on('change', () => {
 			skyMaterial.needsUpdate = true;
+			cloudEffect._cloudPass.material.defines.TONE_MAPPING = skyMaterial.defines.TONE_MAPPING;
+			cloudEffect._cloudPass.material.needsUpdate = true;
 		});
 		toneMappingFolder.addBinding(skyMaterial.uniforms, 'toneMappingExposure', {
 			min: 0,
 			step: 1,
 			label: 'Exposure'
+		}).on('change', ({ value }) => {
+			cloudEffect._cloudPass.material.uniforms.toneMappingExposure = value;
 		});
 		toneMappingFolder.addBinding(skyMaterial.defines, 'SRGB_OUTPUT', {
 			label: 'sRGB Output'
@@ -340,6 +414,28 @@
 			0, 0, 0, 1
 		);
 
+		const R = 6360000;
+		const h = 0;
+
+		const lon = 2.031692;
+		const lat = 0.696459;
+
+		const cosLat = Math.cos(lat);
+		const sinLat = Math.sin(lat);
+		const cosLon = Math.cos(lon);
+		const sinLon = Math.sin(lon);
+
+		const positionECEF = new t3d.Vector3(
+			(R + h) * cosLat * cosLon,
+			(R + h) * cosLat * sinLon,
+			(R + h) * sinLat
+		);
+
+		const east = new t3d.Vector3(-sinLon, cosLon, 0).normalize();
+		const up = new t3d.Vector3(cosLat * cosLon, cosLat * sinLon, sinLat).normalize();
+		const north = new t3d.Vector3().crossVectors(up, east).normalize();
+		worldToECEFMatrix.makeBasis(north, up, east);
+
 		function loop(count) {
 			requestAnimationFrame(loop);
 
@@ -349,21 +445,26 @@
 
 			if (altitudeParams.fixedAltitude) {
 				worldToECEFMatrix.setPosition(
-					-camera.position.x,
-					-camera.position.z,
-					camera.position.y + (-6360000 - altitudeParams.cameraHeight)
+					-camera.position.x + positionECEF.x,
+					-camera.position.y + positionECEF.y,
+					-camera.position.z + positionECEF.z + altitudeParams.cameraHeight
 				);
 			} else {
-				worldToECEFMatrix.setPosition(
-					-camera.position.x,
-					-camera.position.z,
-					-6360000
-				);
+				worldToECEFMatrix.setPosition(positionECEF);
 			}
+			setSunLightDirection();
+			setSunLightColor();
 
 			sky.setCamera(camera, worldToECEFMatrix);
+			cloudEffect.setCamera(camera, worldToECEFMatrix);
 
-			forwardRenderer.render(scene, camera);
+			scene.updateMatrix();
+			scene.updateRenderStates(camera);
+			scene.updateRenderQueue(camera);
+		
+			shadowMapPass.render(renderer, scene);
+
+			effectComposer.render(renderer, scene, camera, backRenderTarget);
 		}
 		requestAnimationFrame(loop);
 
@@ -371,9 +472,9 @@
 			width = window.innerWidth || 2;
 			height = window.innerHeight || 2;
 
-			camera.setPerspective(70 / 180 * Math.PI, width / height, 1, 1000);
+			camera.setPerspective(70 / 180 * Math.PI, width / height, 1, 1000000);
 
-			forwardRenderer.backRenderTarget.resize(width, height);
+			backRenderTarget.resize(width, height);
 		}
 		window.addEventListener('resize', onWindowResize, false);
 	</script>
